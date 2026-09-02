@@ -41,6 +41,10 @@
   }
 
   function displayNames(people) {
+    if (people.every((p) => p.displayName)) {
+      return people.map((p) => p.displayName);
+    }
+
     const counts = {};
     people.forEach((p) => { counts[p.name] = (counts[p.name] || 0) + 1; });
     const seen = {};
@@ -175,9 +179,27 @@
       const li = document.createElement("li");
       li.className = "legend-item";
       li.id = `legend-${p.id}`;
-      li.innerHTML = `<span class="legend-dot" style="background:${p.color}"></span>
-        <span class="legend-name">${names[i]}</span>
-        <span class="legend-status">🕯️</span>`;
+
+      const link = document.createElement("a");
+      link.className = "person-link";
+      link.href = p.page;
+      link.setAttribute("aria-label", `Abrir la página de ${names[i]}`);
+
+      const dot = document.createElement("span");
+      dot.className = "legend-dot";
+      dot.style.background = p.color;
+
+      const name = document.createElement("span");
+      name.className = "legend-name";
+      name.textContent = names[i];
+
+      const status = document.createElement("span");
+      status.className = "legend-status";
+      status.textContent = "🕯️";
+      status.setAttribute("aria-hidden", "true");
+
+      link.append(dot, name, status);
+      li.appendChild(link);
       ul.appendChild(li);
     });
   }

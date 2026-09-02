@@ -9,7 +9,10 @@
               nombrar los archivos). No lo cambies una vez hayas subido
               archivos, o tendrás que renombrarlos también.
     name   -> nombre que se muestra en la web.
+    displayName -> nombre visible cuando hay que distinguir a dos personas
+                   que se llaman igual.
     color  -> color de su porción de tarta y de su vela (código hex).
+    page   -> ruta a su página individual.
     audio  -> ruta al archivo de la canción. Súbelo a assets/audio/
               con ese mismo nombre de archivo.
     comics -> lista de imágenes del cómic, en orden. Puede tener 1 o
@@ -32,28 +35,36 @@ const CONFIG = {
     {
       id: "diego-s1",
       name: "Diego Sánchez",
+      displayName: "Diego Sánchez (1)",
       color: "#ff5d8f",
+      page: "personas/diego-sanchez-1.html",
       audio: "assets/audio/diego-s1.mp3",
       comics: []
     },
     {
       id: "diego-s2",
       name: "Diego Sánchez",
+      displayName: "Diego Sánchez (2)",
       color: "#4fb6ff",
+      page: "personas/diego-sanchez-2.html",
       audio: "assets/audio/diego-s2.mp3",
       comics: []
     },
     {
       id: "carlos",
       name: "Carlos Conde",
+      displayName: "Carlos Conde",
       color: "#6fe0a0",
+      page: "personas/carlos-conde.html",
       audio: "assets/audio/carlos.mp3",
       comics: []
     },
     {
       id: "daviles",
       name: "Daviles",
+      displayName: "Daviles",
       color: "#ffcf56",
+      page: "personas/daviles.html",
       audio: "assets/audio/daviles.mp3",
       comics: []
     }

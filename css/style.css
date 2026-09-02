@@ -231,9 +231,27 @@ main {
 
 /* ---------- leyenda ---------- */
 
+.people-section {
+  width: min(94vw, 700px);
+  margin-top: 1.35rem;
+  text-align: center;
+  color: #fff;
+}
+
+.people-section h2 {
+  margin: 0;
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+  text-shadow: 0 2px 8px rgba(0,0,0,0.32);
+}
+
+.people-section > p {
+  margin: 0.35rem 0 0;
+  opacity: 0.9;
+}
+
 .legend {
   list-style: none;
-  margin: 1.8rem 0 0;
+  margin: 1rem 0 0;
   padding: 0;
   display: flex;
   flex-wrap: wrap;
@@ -243,15 +261,33 @@ main {
 }
 
 .legend-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
   background: var(--panel);
   border-radius: 999px;
-  padding: 0.5rem 0.9rem 0.5rem 0.6rem;
   font-weight: 600;
   font-size: 0.92rem;
   box-shadow: 0 4px 10px rgba(0,0,0,0.18);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.legend-item:hover,
+.legend-item:focus-within {
+  transform: translateY(-2px);
+  box-shadow: 0 7px 16px rgba(0,0,0,0.24);
+}
+
+.person-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.95rem 0.55rem 0.65rem;
+  border-radius: inherit;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.person-link:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
 }
 
 .legend-dot {

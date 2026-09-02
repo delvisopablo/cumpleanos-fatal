@@ -7,6 +7,8 @@ Web interactiva con una tarta de 4 porciones y 4 velas, una por persona:
 1. Al soplar (tocar) la vela de alguien, se apaga con humo y suena su canción.
 2. Al comerse su trozo de tarta (que se desbloquea al soplar la vela), aparece
    su cómic en una ventana emergente.
+3. Cada nombre de la portada enlaza a una página individual con su canción y
+   su cómic.
 
 ## Cómo verla
 
@@ -31,6 +33,8 @@ index.html          página principal
 css/style.css        estilos y animaciones
 js/config.js          nombres, colores, canción y cómic de cada persona
 js/script.js          lógica de la tarta, las velas y el cómic
+js/persona.js         contenido y acciones de las páginas individuales
+personas/             una página propia para cada cumpleañero
 assets/audio/         canciones (.mp3)
 assets/comics/        páginas de cómic (imágenes), una carpeta por persona
 ```

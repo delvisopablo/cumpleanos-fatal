@@ -1,0 +1,4 @@
+dist/
+.claude-flow/
+.swarm/
+.DS_Store
