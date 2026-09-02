@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎂 Cumple a 4</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎂</text></svg>">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="party-bg" id="party-bg" aria-hidden="true"></div>
+
+<header class="page-header">
+  <h1>🎉 ¡Feliz Cumpleaños! 🎉</h1>
+  <p class="subtitle">Sopla cada vela para escuchar su canción y luego cómete su trozo de tarta</p>
+</header>
+
+<main>
+  <div class="cake-stage">
+    <svg id="cake-svg" viewBox="0 0 520 460" role="img" aria-label="Tarta de cumpleaños con cuatro velas"></svg>
+  </div>
+
+  <ul class="legend" id="legend"></ul>
+</main>
+
+<div class="modal hidden" id="comic-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div class="modal-backdrop" id="modal-backdrop"></div>
+  <div class="modal-content">
+    <button class="modal-close" id="modal-close" aria-label="Cerrar">✕</button>
+    <h2 id="modal-title"></h2>
+    <div class="modal-gallery" id="modal-gallery"></div>
+    <div class="modal-nav" id="modal-nav">
+      <button id="prev-btn" aria-label="Anterior">‹</button>
+      <span id="modal-counter"></span>
+      <button id="next-btn" aria-label="Siguiente">›</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div id="audio-container" hidden></div>
+
+<script src="js/config.js"></script>
+<script src="js/script.js"></script>
+</body>
+</html>
