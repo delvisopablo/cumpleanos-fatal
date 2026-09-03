@@ -18,32 +18,41 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎂</text></svg>">
 <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-
-<div class="party-bg" id="party-bg" aria-hidden="true"></div>
+<body class="home-page">
 
 <header class="page-header">
-  <h1>🎉 ¡Feliz Cumpleaños! 🎉</h1>
-  <p class="subtitle">Sopla cada vela para escuchar su canción y luego cómete su trozo de tarta</p>
+  <p class="eyebrow">Una mesa preparada para cuatro</p>
+  <h1>¡Feliz Cumpleaños!</h1>
+  <p class="subtitle">La tarta decide quién sopla. Después, toca comérsela a bocados.</p>
 </header>
 
-<main>
-  <div class="cake-stage">
-    <canvas id="cake-canvas" role="img" aria-label="Tarta de cumpleaños en 3D con cuatro velas"></canvas>
-    <div class="cake-controls">
-      <button type="button" id="spin-btn" class="spin-btn">🎡 Girar la tarta</button>
+<main class="home-main">
+  <section class="scene-shell" aria-label="Mesa de cumpleaños interactiva en tres dimensiones">
+    <canvas id="cake-canvas" role="img" aria-label="Mesa de cumpleaños en 3D con una tarta, cuatro velas y cuatro sitios preparados" aria-describedby="cake-status"></canvas>
+    <div class="scene-shade" aria-hidden="true"></div>
+    <div class="scene-ui">
+      <span class="round-label">Ruleta de cumpleaños</span>
       <p class="cake-status" id="cake-status" aria-live="polite">Gira la tarta para elegir la primera vela.</p>
       <button type="button" id="blow-btn" class="blow-btn" hidden>🎤 Mantén pulsado para soplar</button>
-      <p class="cake-hint" id="cake-hint" hidden>Sopla de verdad al micrófono, pulsa y mantén la barra espaciadora, o mantén pulsado el botón de arriba.</p>
+      <p class="cake-hint" id="cake-hint" hidden>Sopla al micrófono, mantén pulsado espacio o usa este botón.</p>
     </div>
-  </div>
-
-  <section class="people-section" aria-labelledby="people-title">
-    <h2 id="people-title">Los cuatro cumpleañeros</h2>
-    <p>Elige un nombre para entrar en su página.</p>
-    <ul class="legend" id="legend"></ul>
+    <div class="scene-fallback" id="scene-fallback" hidden>
+      <strong>No hemos podido encender la escena 3D.</strong>
+      <span>Comprueba tu conexión y vuelve a cargar la página.</span>
+    </div>
   </section>
 </main>
+
+<footer class="party-dock">
+  <h2 class="sr-only" id="people-title">Los cuatro cumpleañeros</h2>
+  <div class="dock-inner">
+    <ul class="legend" id="legend" aria-labelledby="people-title"></ul>
+    <button type="button" id="spin-btn" class="spin-btn">
+      <span aria-hidden="true">✦</span>
+      <span>Girar la tarta</span>
+    </button>
+  </div>
+</footer>
 
 <div class="modal hidden" id="comic-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
   <div class="modal-backdrop" id="modal-backdrop"></div>
@@ -59,12 +68,13 @@
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <div id="audio-container" hidden></div>
 
-<script src="js/config.js"></script>
-<script type="module" src="js/cake3d.js"></script>
-<script type="module" src="js/script.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js"></script>
+<script defer src="js/config.js"></script>
+<script defer src="js/cake3d.js"></script>
+<script defer src="js/script.js"></script>
 </body>
 </html>

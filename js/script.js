@@ -1,302 +1,342 @@
-// Orquestación de la página: estado de velas/porciones, ruleta, soplido
-// (micrófono / espacio / botón táctil), mordisco y modal de cómic.
-// La parte 3D vive en js/cake3d.js; aquí solo se decide "cuándo" pasa cada cosa.
+/* global Cake3D */
 
-(function () {
+// Estado y reglas de la fiesta: ruleta, soplido, canción exclusiva,
+// mordiscos progresivos y modal. La geometría vive en cake3d.js.
+(function (global) {
   "use strict";
 
-  const CONFIG = window.CONFIG;
-  const BLOW_SUSTAIN_MS = 260; // cuánto tiempo hay que mantener el soplido/espacio/tap
-  const BLOW_RMS_THRESHOLD = 0.17; // umbral de volumen (0-1) para considerar "soplido"
+  const CONFIG = global.CONFIG;
+  const TEST_MODE = new URLSearchParams(global.location.search).has("test");
+  const BLOW_SUSTAIN_MS = TEST_MODE ? 30 : 340;
+  const BLOW_RMS_THRESHOLD = 0.14;
+  const MISSING_AUDIO_NOTICE_MS = TEST_MODE ? 90 : 1700;
+  const AUDIO_LOAD_TIMEOUT_MS = TEST_MODE ? 350 : 5500;
+  const BITE_STEPS = global.Cake3D ? global.Cake3D.BITE_STEPS : 4;
 
-  const state = {}; // { id: { blown, eaten } }
-  let currentAudio = null;
-  let modalPerson = null;
-  let modalIndex = 0;
-
+  const state = {};
   let cake = null;
   let activeCandleId = null;
   let spinning = false;
+  let songPlaying = false;
   let allBlown = false;
+  let currentAudio = null;
+  let nomSoundCount = 0;
 
-  // ---------- utilidades compartidas con la config ----------
+  let modalPerson = null;
+  let modalIndex = 0;
+  let modalReturnFocus = null;
 
   function displayNames(people) {
-    if (people.every((p) => p.displayName)) {
-      return people.map((p) => p.displayName);
+    if (people.every((person) => person.displayName)) {
+      return people.map((person) => person.displayName);
     }
     const counts = {};
-    people.forEach((p) => { counts[p.name] = (counts[p.name] || 0) + 1; });
+    people.forEach((person) => { counts[person.name] = (counts[person.name] || 0) + 1; });
     const seen = {};
-    return people.map((p) => {
-      if (counts[p.name] > 1) {
-        seen[p.name] = (seen[p.name] || 0) + 1;
-        return `${p.name} (${seen[p.name]})`;
+    return people.map((person) => {
+      if (counts[person.name] > 1) {
+        seen[person.name] = (seen[person.name] || 0) + 1;
+        return `${person.name} (${seen[person.name]})`;
       }
-      return p.name;
+      return person.name;
     });
   }
 
   function personById(id) {
-    return CONFIG.people.find((p) => p.id === id);
+    return CONFIG.people.find((person) => person.id === id);
   }
 
-  // ---------- fondo de fiesta (globos/confeti), igual que antes ----------
-
-  function buildBackground() {
-    const bg = document.getElementById("party-bg");
-    const hues = ["#ff5d8f", "#4fb6ff", "#6fe0a0", "#ffcf56", "#c58bff"];
-    for (let i = 0; i < 9; i++) {
-      const b = document.createElement("div");
-      b.className = "balloon";
-      b.style.setProperty("--left", `${Math.round(Math.random() * 92)}%`);
-      b.style.setProperty("--size", `${44 + Math.round(Math.random() * 34)}px`);
-      b.style.setProperty("--dur", `${14 + Math.random() * 10}s`);
-      b.style.setProperty("--delay", `${-Math.random() * 18}s`);
-      b.style.setProperty("--hue", hues[i % hues.length]);
-      bg.appendChild(b);
-    }
-    for (let i = 0; i < 16; i++) {
-      const c = document.createElement("div");
-      c.className = "confetti";
-      c.style.setProperty("--left", `${Math.round(Math.random() * 100)}%`);
-      c.style.setProperty("--dur", `${7 + Math.random() * 6}s`);
-      c.style.setProperty("--delay", `${-Math.random() * 10}s`);
-      c.style.setProperty("--hue", hues[(i + 2) % hues.length]);
-      bg.appendChild(c);
-    }
+  function showToast(message, duration = 4200) {
+    const toast = document.getElementById("toast");
+    toast.textContent = message;
+    toast.classList.add("show");
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => toast.classList.remove("show"), duration);
   }
 
-  // ---------- leyenda ----------
+  function setStatus(message) {
+    document.getElementById("cake-status").textContent = message;
+  }
 
   function renderLegend(names) {
-    const ul = document.getElementById("legend");
-    ul.innerHTML = "";
-    CONFIG.people.forEach((p, i) => {
-      const li = document.createElement("li");
-      li.className = "legend-item";
-      li.id = `legend-${p.id}`;
+    const list = document.getElementById("legend");
+    list.innerHTML = "";
+
+    CONFIG.people.forEach((person, index) => {
+      const item = document.createElement("li");
+      item.className = "legend-item";
+      item.id = `legend-${person.id}`;
+      item.style.setProperty("--person-color", person.color);
 
       const link = document.createElement("a");
       link.className = "person-link";
-      link.href = p.page;
-      link.setAttribute("aria-label", `Abrir la página de ${names[i]}`);
+      link.href = person.page;
 
       const dot = document.createElement("span");
       dot.className = "legend-dot";
-      dot.style.background = p.color;
+      dot.setAttribute("aria-hidden", "true");
 
       const name = document.createElement("span");
       name.className = "legend-name";
-      name.textContent = names[i];
+      name.textContent = names[index];
 
       const status = document.createElement("span");
       status.className = "legend-status";
-      status.textContent = "🕯️";
       status.setAttribute("aria-hidden", "true");
 
-      link.append(dot, name, status);
-      li.appendChild(link);
-      ul.appendChild(li);
+      const progress = document.createElement("span");
+      progress.className = "legend-progress";
+      progress.setAttribute("aria-hidden", "true");
+
+      link.append(dot, name, status, progress);
+      item.appendChild(link);
+      list.appendChild(item);
+      updateLegend(person.id);
     });
   }
 
   function updateLegend(id) {
-    const s = state[id];
-    const li = document.getElementById(`legend-${id}`);
-    if (!li) return;
-    const status = li.querySelector(".legend-status");
-    status.textContent = s.eaten ? "😋" : s.blown ? "🍰" : "🕯️";
+    const itemState = state[id];
+    const person = personById(id);
+    const item = document.getElementById(`legend-${id}`);
+    if (!item || !itemState || !person) return;
+
+    const status = item.querySelector(".legend-status");
+    const link = item.querySelector(".person-link");
+    const displayName = person.displayName || person.name;
+    const percent = Math.round((itemState.bites / BITE_STEPS) * 100);
+
+    item.classList.toggle("is-active", activeCandleId === id);
+    item.classList.toggle("is-complete", itemState.eaten);
+    item.style.setProperty("--progress", `${percent}%`);
+
+    if (itemState.eaten) status.textContent = "😋";
+    else if (itemState.bites > 0) status.textContent = "🍴";
+    else if (itemState.blown) status.textContent = "🍰";
+    else if (activeCandleId === id) status.textContent = "✨";
+    else status.textContent = "🕯️";
+
+    const stateLabel = itemState.eaten
+      ? "porción terminada"
+      : itemState.bites > 0
+        ? `${itemState.bites} de ${BITE_STEPS} mordiscos`
+        : itemState.blown
+          ? "vela apagada"
+          : activeCandleId === id
+            ? "vela activa"
+            : "vela pendiente";
+    link.setAttribute("aria-label", `Abrir la página de ${displayName}; ${stateLabel}`);
   }
 
-  // ---------- audio: canción de cada persona ----------
+  function updateAllLegend() {
+    CONFIG.people.forEach((person) => updateLegend(person.id));
+  }
+
+  function updateSpinButton() {
+    const button = document.getElementById("spin-btn");
+    const label = button.querySelector("span:last-child");
+    const blocked = spinning || songPlaying || Boolean(activeCandleId) || allBlown || !cake;
+    button.disabled = blocked;
+    button.hidden = allBlown;
+
+    if (allBlown) label.textContent = "A comer";
+    else if (songPlaying) label.textContent = "Escuchando…";
+    else if (spinning) label.textContent = "Girando…";
+    else if (activeCandleId) label.textContent = "Sopla la vela";
+    else label.textContent = "Girar la tarta";
+  }
 
   function playSong(id) {
     const person = personById(id);
-    if (!currentAudio) {
-      currentAudio = new Audio();
-    }
-    currentAudio.pause();
-    currentAudio.src = person.audio;
-    const playPromise = currentAudio.play();
-    if (playPromise && typeof playPromise.catch === "function") {
-      playPromise.catch(() => {
-        showToast(`🎵 Añade la canción de ${person.name} en "${person.audio}" para que suene aquí.`);
-      });
-    }
+    return new Promise((resolve) => {
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.removeAttribute("src");
+      }
+
+      const audio = new Audio();
+      currentAudio = audio;
+      let finished = false;
+      let missingStarted = false;
+      let noticeTimer = null;
+
+      const loadTimer = setTimeout(() => handleMissing(), AUDIO_LOAD_TIMEOUT_MS);
+
+      function cleanup() {
+        clearTimeout(loadTimer);
+        clearTimeout(noticeTimer);
+        audio.removeEventListener("ended", handleEnded);
+        audio.removeEventListener("error", handleMissing);
+      }
+
+      function finish(result) {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        resolve(result);
+      }
+
+      function handleEnded() {
+        finish({ played: true, missing: false });
+      }
+
+      function handleMissing() {
+        if (finished || missingStarted) return;
+        missingStarted = true;
+        clearTimeout(loadTimer);
+        audio.pause();
+        showToast(`🎵 La canción de ${person.displayName || person.name} aún no está subida. La fiesta continúa.`, MISSING_AUDIO_NOTICE_MS);
+        noticeTimer = setTimeout(() => finish({ played: false, missing: true }), MISSING_AUDIO_NOTICE_MS);
+      }
+
+      audio.addEventListener("ended", handleEnded);
+      audio.addEventListener("error", handleMissing);
+      audio.preload = "auto";
+      audio.src = person.audio;
+
+      try {
+        const playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(handleMissing);
+        }
+      } catch (error) {
+        handleMissing();
+      }
+    });
   }
 
-  // ---------- sonido sintetizado "ñam ñam" (sin depender de un mp3) ----------
+  let sfxContext = null;
 
-  let sfxCtx = null;
-  function getSfxCtx() {
-    if (!sfxCtx) {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      sfxCtx = new Ctx();
+  function getSfxContext() {
+    if (!sfxContext) {
+      const AudioContextClass = global.AudioContext || global.webkitAudioContext;
+      if (!AudioContextClass) return null;
+      sfxContext = new AudioContextClass();
     }
-    return sfxCtx;
+    return sfxContext;
   }
 
   function playNomSound() {
+    nomSoundCount += 1;
     try {
-      const ctx = getSfxCtx();
-      const now = ctx.currentTime;
-      [0, 0.16].forEach((offset) => {
-        const bufferSize = Math.floor(ctx.sampleRate * 0.12);
-        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-          data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
-        }
-        const noise = ctx.createBufferSource();
-        noise.buffer = buffer;
-        const filter = ctx.createBiquadFilter();
-        filter.type = "lowpass";
-        filter.frequency.setValueAtTime(1200, now + offset);
-        filter.frequency.exponentialRampToValueAtTime(280, now + offset + 0.12);
-        const gain = ctx.createGain();
-        gain.gain.setValueAtTime(0.5, now + offset);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.12);
-        noise.connect(filter).connect(gain).connect(ctx.destination);
-        noise.start(now + offset);
-        noise.stop(now + offset + 0.13);
-      });
-    } catch (err) {
-      // Sin Web Audio disponible: seguimos sin sonido, no rompemos el mordisco.
+      const context = getSfxContext();
+      if (!context) return;
+      if (context.state === "suspended") context.resume();
+
+      const now = context.currentTime;
+      const oscillator = context.createOscillator();
+      const filter = context.createBiquadFilter();
+      const gain = context.createGain();
+      oscillator.type = "triangle";
+      oscillator.frequency.setValueAtTime(190, now);
+      oscillator.frequency.exponentialRampToValueAtTime(88, now + 0.22);
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(760, now);
+      filter.frequency.exponentialRampToValueAtTime(290, now + 0.22);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.34, now + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+      oscillator.connect(filter).connect(gain).connect(context.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.25);
+    } catch (error) {
+      // El mordisco sigue funcionando aunque Web Audio no esté disponible.
     }
   }
 
-  // ---------- toast ----------
-
-  function showToast(msg) {
-    const toast = document.getElementById("toast");
-    toast.textContent = msg;
-    toast.classList.add("show");
-    clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => toast.classList.remove("show"), 4200);
-  }
-
-  function setStatus(msg) {
-    document.getElementById("cake-status").textContent = msg;
-  }
-
-  // ---------- micrófono: detección real de soplido ----------
-
-  let micRequested = false;
-  let micEnabled = false;
-  let audioCtx = null;
-  let analyser = null;
-  let micDataArray = null;
+  let micState = "idle";
+  let micStream = null;
+  let micContext = null;
+  let micAnalyser = null;
+  let micSamples = null;
   let breathAboveSince = null;
 
   async function ensureMic() {
-    if (micRequested) return micEnabled;
-    micRequested = true;
-
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showToast("Tu navegador no soporta el micrófono aquí: sopla con la barra espaciadora o el botón 🎤.");
+    if (micState !== "idle") return micState === "active";
+    if (TEST_MODE) {
+      micState = "unavailable";
       return false;
     }
 
-    showToast("Pedimos permiso al micrófono solo para detectar tu soplido 🌬️ — no se graba ni se guarda nada.");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      micState = "unavailable";
+      showToast("Tu navegador no permite usar el micrófono aquí. Usa espacio o mantén pulsado el botón 🎤.");
+      return false;
+    }
+
+    micState = "requesting";
+    showToast("Usaremos el micrófono solo para detectar el soplido; no se graba ni se guarda nada.");
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new Ctx();
-      const source = audioCtx.createMediaStreamSource(stream);
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.6;
-      source.connect(analyser);
-      micDataArray = new Uint8Array(analyser.frequencyBinCount);
-      micEnabled = true;
-      requestAnimationFrame(micLoop);
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          autoGainControl: false,
+          echoCancellation: false,
+          noiseSuppression: false,
+        },
+      });
+      const AudioContextClass = global.AudioContext || global.webkitAudioContext;
+      micContext = new AudioContextClass();
+      const source = micContext.createMediaStreamSource(micStream);
+      micAnalyser = micContext.createAnalyser();
+      micAnalyser.fftSize = 512;
+      micAnalyser.smoothingTimeConstant = 0.5;
+      source.connect(micAnalyser);
+      micSamples = new Uint8Array(micAnalyser.frequencyBinCount);
+      micState = "active";
+      global.requestAnimationFrame(micLoop);
       return true;
-    } catch (err) {
-      showToast("Sin permiso de micrófono: puedes soplar igualmente con la barra espaciadora o el botón 🎤.");
-      micEnabled = false;
+    } catch (error) {
+      micState = "denied";
+      showToast("Sin permiso de micrófono. Puedes soplar con espacio o manteniendo pulsado el botón 🎤.");
       return false;
     }
   }
 
   function micLoop() {
-    if (micEnabled && analyser) {
-      analyser.getByteTimeDomainData(micDataArray);
-      let sum = 0;
-      for (let i = 0; i < micDataArray.length; i++) {
-        const v = (micDataArray[i] - 128) / 128;
-        sum += v * v;
-      }
-      const rms = Math.sqrt(sum / micDataArray.length);
-
-      if (activeCandleId && !state[activeCandleId].blown) {
-        if (rms > BLOW_RMS_THRESHOLD) {
-          if (breathAboveSince === null) breathAboveSince = performance.now();
-          else if (performance.now() - breathAboveSince > BLOW_SUSTAIN_MS) {
-            breathAboveSince = null;
-            handleBlowSignal();
-          }
-        } else {
-          breathAboveSince = null;
-        }
-      }
+    if (micState !== "active" || !micAnalyser) return;
+    micAnalyser.getByteTimeDomainData(micSamples);
+    let sum = 0;
+    for (let index = 0; index < micSamples.length; index++) {
+      const value = (micSamples[index] - 128) / 128;
+      sum += value * value;
     }
-    requestAnimationFrame(micLoop);
-  }
+    const rms = Math.sqrt(sum / micSamples.length);
 
-  // ---------- espacio / botón táctil: soplido alternativo ----------
+    if (activeCandleId && !songPlaying && !spinning) {
+      if (rms > BLOW_RMS_THRESHOLD) {
+        if (breathAboveSince === null) breathAboveSince = performance.now();
+        else if (performance.now() - breathAboveSince >= BLOW_SUSTAIN_MS) {
+          breathAboveSince = null;
+          handleBlowSignal("microphone");
+        }
+      } else {
+        breathAboveSince = null;
+      }
+    } else {
+      breathAboveSince = null;
+    }
+    global.requestAnimationFrame(micLoop);
+  }
 
   let chargeTimer = null;
 
   function startCharge() {
-    if (!activeCandleId || state[activeCandleId].blown || spinning) return;
-    if (chargeTimer) return;
+    if (!activeCandleId || state[activeCandleId].blown || spinning || songPlaying || chargeTimer) return false;
+    document.getElementById("blow-btn").classList.add("is-charging");
     chargeTimer = setTimeout(() => {
       chargeTimer = null;
-      handleBlowSignal();
+      document.getElementById("blow-btn").classList.remove("is-charging");
+      handleBlowSignal("press");
     }, BLOW_SUSTAIN_MS);
+    return true;
   }
 
   function cancelCharge() {
-    if (chargeTimer) {
-      clearTimeout(chargeTimer);
-      chargeTimer = null;
-    }
-  }
-
-  function handleBlowSignal() {
-    if (!activeCandleId || state[activeCandleId].blown) return;
-    blowOutCandle(activeCandleId);
-  }
-
-  // ---------- velas ----------
-
-  function blowOutCandle(id) {
-    const s = state[id];
-    if (!s || s.blown) return;
-    s.blown = true;
-    breathAboveSince = null;
-    cancelCharge();
-
-    const wasActive = activeCandleId === id;
-    if (wasActive) activeCandleId = null;
-
-    cake.blowOutCandle(id);
-    updateLegend(id);
-    playSong(id);
-
-    const person = personById(id);
-    const remaining = CONFIG.people.filter((p) => !state[p.id].blown);
-
-    if (remaining.length === 0) {
-      allBlown = true;
-      enterBitePhase();
-    } else {
-      setStatus(`¡Vela de ${person.name} apagada! 🎶 Gira otra vez para la próxima vela.`);
-      setBlowUiVisible(false);
-      document.getElementById("spin-btn").disabled = false;
-    }
+    if (chargeTimer) clearTimeout(chargeTimer);
+    chargeTimer = null;
+    const button = document.getElementById("blow-btn");
+    if (button) button.classList.remove("is-charging");
   }
 
   function setBlowUiVisible(visible) {
@@ -304,175 +344,294 @@
     document.getElementById("cake-hint").hidden = !visible;
   }
 
+  function handleBlowSignal() {
+    if (!activeCandleId || songPlaying || spinning || state[activeCandleId].blown) return Promise.resolve(false);
+    return blowOutCandle(activeCandleId);
+  }
+
+  async function blowOutCandle(id) {
+    const itemState = state[id];
+    if (!itemState || itemState.blown || activeCandleId !== id || songPlaying) return false;
+
+    const person = personById(id);
+    itemState.blown = true;
+    activeCandleId = null;
+    songPlaying = true;
+    breathAboveSince = null;
+    cancelCharge();
+    setBlowUiVisible(false);
+    updateAllLegend();
+    updateSpinButton();
+    setStatus(`¡Vela de ${person.displayName || person.name} apagada! Ahora suena su canción 🎶`);
+
+    const songPromise = playSong(id);
+    try {
+      await Promise.all([cake.blowOutCandle(id), songPromise]);
+    } finally {
+      songPlaying = false;
+    }
+
+    const remaining = CONFIG.people.filter((candidate) => !state[candidate.id].blown);
+    if (remaining.length === 0) {
+      allBlown = true;
+      enterBitePhase();
+    } else {
+      setStatus(`Canción terminada. Quedan ${remaining.length} ${remaining.length === 1 ? "vela" : "velas"}; gira de nuevo.`);
+      updateSpinButton();
+    }
+    return true;
+  }
+
   function armCandle(id) {
     activeCandleId = id;
     const person = personById(id);
-    setStatus(`¡Le toca a ${person.name}! Sopla su vela para apagarla.`);
+    setStatus(`¡Le toca a ${person.displayName || person.name}! Sopla su vela.`);
     setBlowUiVisible(true);
-    document.getElementById("spin-btn").disabled = true;
+    updateAllLegend();
+    updateSpinButton();
     ensureMic();
   }
 
   async function onSpinClick() {
-    if (spinning || allBlown) return;
-    const excludeIds = CONFIG.people.filter((p) => state[p.id].blown).map((p) => p.id);
-    if (excludeIds.length >= CONFIG.people.length) return;
+    if (spinning || songPlaying || activeCandleId || allBlown || !cake) return null;
+    const excludedIds = CONFIG.people
+      .filter((person) => state[person.id].blown || state[person.id].eaten)
+      .map((person) => person.id);
+    if (excludedIds.length >= CONFIG.people.length) return null;
 
     spinning = true;
     cake.clearArmedHighlight();
-    document.getElementById("spin-btn").disabled = true;
     setBlowUiVisible(false);
-    setStatus("🎡 Girando la tarta...");
+    setStatus("La tarta está girando…");
+    updateAllLegend();
+    updateSpinButton();
 
-    const landedId = await cake.spinToRandom(excludeIds);
-    spinning = false;
-
-    if (!landedId) return; // no debería pasar: ya comprobamos candidatos arriba
-    armCandle(landedId);
+    try {
+      const landedId = await cake.spinToRandom(excludedIds);
+      spinning = false;
+      if (landedId) armCandle(landedId);
+      else updateSpinButton();
+      return landedId;
+    } catch (error) {
+      spinning = false;
+      updateSpinButton();
+      setStatus("No hemos podido girar la tarta. Inténtalo otra vez.");
+      showToast("La ruleta ha tropezado con el mantel. Prueba de nuevo.");
+      return null;
+    }
   }
 
-  // ---------- porciones: mordisco + cómic ----------
-
   function enterBitePhase() {
-    setStatus("¡Todas las velas apagadas! Ahora toca cada porción para darle un mordisco 🍰");
-    document.getElementById("spin-btn").disabled = true;
-    document.getElementById("spin-btn").hidden = true;
+    setStatus(`¡Las cuatro velas están apagadas! Cada porción necesita ${BITE_STEPS} mordiscos 🍰`);
     setBlowUiVisible(false);
     cake.setSlicesInteractive(true);
+    updateAllLegend();
+    updateSpinButton();
   }
 
   async function onSliceChosen(id) {
-    const s = state[id];
-    if (!allBlown || !s.blown || s.eaten) return;
-    s.eaten = true;
+    const itemState = state[id];
+    if (!allBlown || songPlaying || !itemState || !itemState.blown || itemState.eaten || itemState.biting) return null;
 
+    itemState.biting = true;
     playNomSound();
-    await cake.biteSlice(id);
+    const result = await cake.biteSlice(id);
+    itemState.biting = false;
+    if (!result || result.ignored) return result;
+
+    itemState.bites = result.bites;
+    itemState.eaten = result.complete;
     updateLegend(id);
 
-    const remaining = CONFIG.people.filter((p) => !state[p.id].eaten);
-    setStatus(
-      remaining.length === 0
-        ? "¡Feliz cumpleaños a los cuatro! 🎉🎂"
-        : "¡Ñam! Sigue mordiendo el resto de porciones."
-    );
-
-    openComic(id);
+    const person = personById(id);
+    if (result.complete) {
+      const remainingSlices = CONFIG.people.filter((candidate) => !state[candidate.id].eaten);
+      setStatus(
+        remainingSlices.length === 0
+          ? "¡No queda ni una miga! Feliz cumpleaños a los cuatro 🎉"
+          : `¡Porción de ${person.displayName || person.name} terminada! Quedan ${remainingSlices.length}.`
+      );
+      openComic(id);
+    } else {
+      setStatus(`¡Ñam! A ${person.displayName || person.name} le quedan ${result.remaining} ${result.remaining === 1 ? "mordisco" : "mordiscos"}.`);
+    }
+    return result;
   }
-
-  // ---------- modal cómic (idéntico al comportamiento anterior) ----------
 
   function openComic(id) {
     modalPerson = personById(id);
     modalIndex = 0;
-    document.getElementById("modal-title").textContent = `El cómic de ${modalPerson.name}`;
+    modalReturnFocus = document.activeElement;
+    document.getElementById("modal-title").textContent = `El cómic de ${modalPerson.displayName || modalPerson.name}`;
     renderModalPage();
-    document.getElementById("comic-modal").classList.remove("hidden");
+    const modal = document.getElementById("comic-modal");
+    modal.classList.remove("hidden");
+    document.getElementById("modal-close").focus();
   }
 
   function renderModalPage() {
     const gallery = document.getElementById("modal-gallery");
-    const nav = document.getElementById("modal-nav");
+    const navigation = document.getElementById("modal-nav");
     const counter = document.getElementById("modal-counter");
     const comics = modalPerson.comics || [];
-
     gallery.innerHTML = "";
 
     if (comics.length === 0) {
-      gallery.innerHTML = `
-        <div class="comic-placeholder">
-          <span class="big-emoji">📔✨</span>
-          <p>El cómic de <strong>${modalPerson.name}</strong> está de camino.</p>
-          <p>Se mostrará aquí en cuanto subas las imágenes a<br>
-          <code>assets/comics/${modalPerson.id}/</code> y las añadas en <code>js/config.js</code>.</p>
-        </div>`;
-      nav.classList.add("single-page");
+      const placeholder = document.createElement("div");
+      placeholder.className = "comic-placeholder";
+      placeholder.innerHTML = `
+        <span class="big-emoji" aria-hidden="true">📔✨</span>
+        <p>El cómic de <strong>${modalPerson.displayName || modalPerson.name}</strong> está de camino.</p>
+        <p>Se mostrará aquí cuando subas sus imágenes a<br>
+        <code>assets/comics/${modalPerson.id}/</code> y las añadas en <code>js/config.js</code>.</p>`;
+      gallery.appendChild(placeholder);
+      navigation.classList.add("single-page");
       counter.textContent = "";
       return;
     }
 
-    const img = document.createElement("img");
-    img.src = comics[modalIndex];
-    img.alt = `Página ${modalIndex + 1} del cómic de ${modalPerson.name}`;
-    img.onerror = () => {
+    const image = document.createElement("img");
+    image.src = comics[modalIndex];
+    image.alt = `Página ${modalIndex + 1} del cómic de ${modalPerson.displayName || modalPerson.name}`;
+    image.onerror = () => {
       gallery.innerHTML = `
         <div class="comic-placeholder">
-          <span class="big-emoji">🖼️❓</span>
+          <span class="big-emoji" aria-hidden="true">🖼️❓</span>
           <p>No se encuentra la imagen:<br><code>${comics[modalIndex]}</code></p>
-          <p>Comprueba que el archivo está subido en esa ruta exacta.</p>
+          <p>Comprueba que el archivo esté en esa ruta exacta.</p>
         </div>`;
     };
-    gallery.appendChild(img);
+    gallery.appendChild(image);
 
-    if (comics.length > 1) {
-      nav.classList.remove("single-page");
-      counter.textContent = `${modalIndex + 1} / ${comics.length}`;
-      document.getElementById("prev-btn").disabled = modalIndex === 0;
-      document.getElementById("next-btn").disabled = modalIndex === comics.length - 1;
-    } else {
-      nav.classList.add("single-page");
-      counter.textContent = "";
-    }
+    navigation.classList.toggle("single-page", comics.length <= 1);
+    counter.textContent = comics.length > 1 ? `${modalIndex + 1} / ${comics.length}` : "";
+    document.getElementById("prev-btn").disabled = modalIndex === 0;
+    document.getElementById("next-btn").disabled = modalIndex === comics.length - 1;
   }
 
   function closeComic() {
-    document.getElementById("comic-modal").classList.add("hidden");
+    const modal = document.getElementById("comic-modal");
+    if (modal.classList.contains("hidden")) return;
+    modal.classList.add("hidden");
     modalPerson = null;
+    if (modalReturnFocus && typeof modalReturnFocus.focus === "function") modalReturnFocus.focus();
   }
 
   function bindModalControls() {
     document.getElementById("modal-close").addEventListener("click", closeComic);
     document.getElementById("modal-backdrop").addEventListener("click", closeComic);
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") closeComic();
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeComic();
     });
     document.getElementById("prev-btn").addEventListener("click", () => {
-      if (modalIndex > 0) { modalIndex--; renderModalPage(); }
-    });
-    document.getElementById("next-btn").addEventListener("click", () => {
-      if (modalPerson && modalIndex < modalPerson.comics.length - 1) { modalIndex++; renderModalPage(); }
-    });
-  }
-
-  // ---------- entrada: teclado y botón táctil de soplido ----------
-
-  function bindBlowControls() {
-    document.addEventListener("keydown", (e) => {
-      if (e.code === "Space" && !e.repeat) {
-        const tag = (e.target && e.target.tagName) || "";
-        if (tag === "BUTTON" || tag === "INPUT" || tag === "TEXTAREA") return;
-        e.preventDefault();
-        startCharge();
+      if (modalIndex > 0) {
+        modalIndex -= 1;
+        renderModalPage();
       }
     });
-    document.addEventListener("keyup", (e) => {
-      if (e.code === "Space") cancelCharge();
+    document.getElementById("next-btn").addEventListener("click", () => {
+      if (modalPerson && modalIndex < modalPerson.comics.length - 1) {
+        modalIndex += 1;
+        renderModalPage();
+      }
+    });
+  }
+
+  function bindBlowControls() {
+    document.addEventListener("keydown", (event) => {
+      if (event.code !== "Space" || event.repeat) return;
+      const tagName = event.target && event.target.tagName;
+      if (["BUTTON", "INPUT", "TEXTAREA", "A"].includes(tagName)) return;
+      event.preventDefault();
+      startCharge();
+    });
+    document.addEventListener("keyup", (event) => {
+      if (event.code === "Space") cancelCharge();
     });
 
-    const blowBtn = document.getElementById("blow-btn");
-    blowBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); startCharge(); });
-    blowBtn.addEventListener("pointerup", cancelCharge);
-    blowBtn.addEventListener("pointercancel", cancelCharge);
-    blowBtn.addEventListener("pointerleave", cancelCharge);
+    const blowButton = document.getElementById("blow-btn");
+    blowButton.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      startCharge();
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach((eventName) => {
+      blowButton.addEventListener(eventName, cancelCharge);
+    });
+    blowButton.addEventListener("touchstart", (event) => {
+      event.preventDefault();
+      startCharge();
+    }, { passive: false });
+    blowButton.addEventListener("touchend", cancelCharge);
+    blowButton.addEventListener("touchcancel", cancelCharge);
   }
 
-  // ---------- arranque ----------
+  function exposeTestApi() {
+    if (!TEST_MODE) return;
+    global.__birthdayTest = {
+      spin: onSpinClick,
+      blow: handleBlowSignal,
+      bite: onSliceChosen,
+      closeComic,
+      getState() {
+        const peopleState = {};
+        CONFIG.people.forEach((person) => { peopleState[person.id] = { ...state[person.id] }; });
+        return {
+          activeCandleId,
+          spinning,
+          songPlaying,
+          allBlown,
+          nomSoundCount,
+          modalOpen: !document.getElementById("comic-modal").classList.contains("hidden"),
+          people: peopleState,
+          scene: cake ? cake.getSnapshot() : null,
+        };
+      },
+    };
+  }
 
   function init() {
-    buildBackground();
+    if (!CONFIG || !Array.isArray(CONFIG.people) || CONFIG.people.length === 0) {
+      document.getElementById("scene-fallback").hidden = false;
+      return;
+    }
 
-    const people = CONFIG.people;
-    CONFIG.people.forEach((p) => { state[p.id] = { blown: false, eaten: false }; });
-    renderLegend(displayNames(people));
-
-    const canvas = document.getElementById("cake-canvas");
-    cake = window.Cake3D.create({ canvas, people });
-    cake.onSliceClick(onSliceChosen);
-
-    document.getElementById("spin-btn").addEventListener("click", onSpinClick);
+    CONFIG.people.forEach((person) => {
+      state[person.id] = { blown: false, eaten: false, bites: 0, biting: false };
+    });
+    renderLegend(displayNames(CONFIG.people));
     bindBlowControls();
     bindModalControls();
+
+    if (!global.THREE || !global.Cake3D) {
+      document.getElementById("scene-fallback").hidden = false;
+      document.getElementById("spin-btn").disabled = true;
+      setStatus("No se ha podido cargar Three.js.");
+      exposeTestApi();
+      return;
+    }
+
+    try {
+      cake = global.Cake3D.create({
+        canvas: document.getElementById("cake-canvas"),
+        people: CONFIG.people,
+      });
+      cake.onSliceClick(onSliceChosen);
+      document.getElementById("spin-btn").addEventListener("click", onSpinClick);
+      updateSpinButton();
+      exposeTestApi();
+      global.__birthdayReady = true;
+    } catch (error) {
+      console.error("No se pudo crear la escena 3D", error);
+      document.getElementById("scene-fallback").hidden = false;
+      document.getElementById("spin-btn").disabled = true;
+      setStatus("No se ha podido encender la escena 3D.");
+      exposeTestApi();
+    }
   }
 
+  global.addEventListener("beforeunload", () => {
+    if (micStream) micStream.getTracks().forEach((track) => track.stop());
+    if (cake) cake.dispose();
+  });
   document.addEventListener("DOMContentLoaded", init);
-})();
+})(window);

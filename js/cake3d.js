@@ -1,487 +1,943 @@
-// Motor 3D de la tarta (Three.js vía CDN, sin build step).
-// Expone window.Cake3D.create({ canvas, people }) -> API de control.
-// No conoce el estado de "soplada/comida": eso lo decide js/script.js,
-// que es quien llama a estos métodos en el momento adecuado.
+/* global THREE */
 
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+// Escena 3D completa. Se mantiene como script clásico para que index.html
+// también funcione al abrirlo directamente, sin compilación ni backend.
+(function (global) {
+  "use strict";
 
-const ANGLE_OFFSET = -45; // igual que la versión 2D: velas arriba/derecha/abajo/izquierda
-const CAKE_RADIUS = 3.1;
-const CAKE_HEIGHT = 1.15;
-const CANDLE_RADIUS_RATIO = 0.58;
-const CANDLE_STICK_H = 1.3;
-const CANDLE_STICK_R = 0.1;
-const SPONGE_COLOR = 0xe7b06b;
-const SPIN_DURATION_MS = 3400;
-const BLOW_ANIM_MS = 750;
-const BITE_ANIM_MS = 700;
-
-function degToRad(d) {
-  return (d * Math.PI) / 180;
-}
-
-function pointOnCircle(r, angleDeg) {
-  const rad = degToRad(angleDeg);
-  return { x: r * Math.sin(rad), z: r * Math.cos(rad) };
-}
-
-function easeInOutCubic(t) {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-}
-function easeOutCubic(t) {
-  return 1 - Math.pow(1 - t, 3);
-}
-function easeOutQuad(t) {
-  return 1 - (1 - t) * (1 - t);
-}
-
-function createGlowTexture() {
-  const size = 128;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  grad.addColorStop(0, "rgba(255,255,255,1)");
-  grad.addColorStop(0.4, "rgba(255,210,140,0.7)");
-  grad.addColorStop(1, "rgba(255,150,60,0)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  return new THREE.CanvasTexture(canvas);
-}
-
-// Textura de "mordisco": un hueco oscuro semicircular con marcas de dientes
-// recortadas en el borde curvo (no busca ser realista, solo legible).
-function createBiteTexture() {
-  const size = 160;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, size, size);
-  const cx = size / 2;
-  const cy = size * 0.22;
-  const r = size * 0.62;
-  ctx.fillStyle = "rgba(35,20,12,0.88)";
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI, false);
-  ctx.closePath();
-  ctx.fill();
-  ctx.globalCompositeOperation = "destination-out";
-  const teeth = 6;
-  for (let i = 0; i <= teeth; i++) {
-    const a = Math.PI * (i / teeth);
-    const tx = cx + r * Math.cos(a);
-    const ty = cy + r * Math.sin(a);
-    ctx.beginPath();
-    ctx.arc(tx, ty, size * 0.075, 0, Math.PI * 2);
-    ctx.fill();
+  if (!global.THREE) {
+    global.Cake3D = null;
+    return;
   }
-  ctx.globalCompositeOperation = "source-over";
-  return new THREE.CanvasTexture(canvas);
-}
 
-function buildSliceShape(radius, startDeg, endDeg) {
-  const shape = new THREE.Shape();
-  const segments = Math.max(8, Math.round((endDeg - startDeg) / 4));
-  shape.moveTo(0, 0);
-  for (let i = 0; i <= segments; i++) {
-    const a = startDeg + (endDeg - startDeg) * (i / segments);
-    const p = pointOnCircle(radius, a);
-    shape.lineTo(p.x, -p.z);
+  const TEST_MODE = new URLSearchParams(global.location.search).has("test");
+  const REDUCED_MOTION = global.matchMedia && global.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const ANGLE_OFFSET = -45;
+  const TABLE_SURFACE_Y = 1.62;
+  const CAKE_RADIUS = 3.05;
+  const CAKE_HEIGHT = 1.16;
+  const CANDLE_RADIUS = CAKE_RADIUS * 0.58;
+  const CANDLE_HEIGHT = 1.28;
+  const BITE_STEPS = 4;
+  const SPIN_DURATION_MS = TEST_MODE ? 120 : REDUCED_MOTION ? 700 : 3300;
+  const CAMERA_IN_MS = TEST_MODE ? 30 : REDUCED_MOTION ? 150 : 650;
+  const CAMERA_OUT_MS = TEST_MODE ? 30 : REDUCED_MOTION ? 150 : 720;
+  const BLOW_DURATION_MS = TEST_MODE ? 40 : 680;
+  const BITE_DURATION_MS = TEST_MODE ? 45 : 460;
+  const TAU = Math.PI * 2;
+
+  function degToRad(degrees) {
+    return (degrees * Math.PI) / 180;
   }
-  shape.lineTo(0, 0);
-  return shape;
-}
 
-export function createCake3D({ canvas, people }) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  function pointOnCircle(radius, angleDeg) {
+    const angle = degToRad(angleDeg);
+    return { x: radius * Math.sin(angle), z: radius * Math.cos(angle) };
+  }
 
-  const scene = new THREE.Scene();
-  const container = canvas.parentElement;
-  const viewSize = 4.4;
+  function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
 
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
-  const camDist = 9;
-  camera.position.set(camDist, camDist * 0.92, camDist);
-  camera.lookAt(0, CAKE_HEIGHT * 0.4, 0);
+  function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+  }
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-  const keyLight = new THREE.DirectionalLight(0xfff2d9, 0.9);
-  keyLight.position.set(5, 8, 4);
-  scene.add(keyLight);
-  const fillLight = new THREE.DirectionalLight(0xbcd4ff, 0.35);
-  fillLight.position.set(-6, 4, -3);
-  scene.add(fillLight);
+  function easeInCubic(t) {
+    return t * t * t;
+  }
 
-  const shadowMesh = new THREE.Mesh(
-    new THREE.CircleGeometry(CAKE_RADIUS * 1.18, 40),
-    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28 })
-  );
-  shadowMesh.rotation.x = -Math.PI / 2;
-  shadowMesh.position.y = -0.02;
-  scene.add(shadowMesh);
+  function setShadow(mesh, cast, receive) {
+    mesh.castShadow = Boolean(cast);
+    mesh.receiveShadow = Boolean(receive);
+    return mesh;
+  }
 
-  const cakeGroup = new THREE.Group();
-  scene.add(cakeGroup);
+  function createCheckerTexture() {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 256;
+    const context = canvas.getContext("2d");
+    const cell = 64;
 
-  const n = people.length;
-  const step = 360 / n;
-  const glowTexture = createGlowTexture();
-  const biteTexture = createBiteTexture();
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 4; x++) {
+        context.fillStyle = (x + y) % 2 === 0 ? "#fff0d8" : "#c83c58";
+        context.fillRect(x * cell, y * cell, cell, cell);
+      }
+    }
 
-  const slices = new Map();
-  const candles = new Map();
+    context.strokeStyle = "rgba(120, 28, 48, 0.18)";
+    context.lineWidth = 3;
+    for (let i = 0; i <= 4; i++) {
+      context.beginPath();
+      context.moveTo(i * cell, 0);
+      context.lineTo(i * cell, 256);
+      context.stroke();
+      context.beginPath();
+      context.moveTo(0, i * cell);
+      context.lineTo(256, i * cell);
+      context.stroke();
+    }
 
-  people.forEach((p, idx) => {
-    const start = idx * step + ANGLE_OFFSET;
-    const end = start + step;
-    const shape = buildSliceShape(CAKE_RADIUS, start, end);
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: CAKE_HEIGHT, bevelEnabled: false, curveSegments: 1 });
-    // ExtrudeGeometry asigna materialIndex 0 a las tapas (arriba/abajo) y
-    // materialIndex 1 a las caras laterales -> [glaseado, bizcocho].
-    const capMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(p.color), roughness: 0.6, transparent: true });
-    const sideMat = new THREE.MeshStandardMaterial({ color: SPONGE_COLOR, roughness: 0.9, transparent: true });
-    const mesh = new THREE.Mesh(geo, [capMat, sideMat]);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.userData = { id: p.id };
-    cakeGroup.add(mesh);
-    slices.set(p.id, { mesh, capMat, sideMat, angleMid: start + step / 2, removed: false });
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(6.8, 4.8);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
 
-    const edge = pointOnCircle(CAKE_RADIUS, start);
-    const lineGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0, CAKE_HEIGHT + 0.005, 0),
-      new THREE.Vector3(edge.x, CAKE_HEIGHT + 0.005, edge.z),
-    ]);
-    cakeGroup.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 })));
-  });
+  function createGlowTexture() {
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 128;
+    const context = canvas.getContext("2d");
+    const gradient = context.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.35, "rgba(255,211,125,0.78)");
+    gradient.addColorStop(1, "rgba(255,135,40,0)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(canvas);
+  }
 
-  const rim = new THREE.Mesh(
-    new THREE.TorusGeometry(CAKE_RADIUS, 0.055, 10, 64),
-    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 })
-  );
-  rim.rotation.x = Math.PI / 2;
-  rim.position.y = CAKE_HEIGHT;
-  cakeGroup.add(rim);
+  function roundedRectangle(context, x, y, width, height, radius) {
+    const r = Math.min(radius, width / 2, height / 2);
+    context.beginPath();
+    context.moveTo(x + r, y);
+    context.lineTo(x + width - r, y);
+    context.quadraticCurveTo(x + width, y, x + width, y + r);
+    context.lineTo(x + width, y + height - r);
+    context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+    context.lineTo(x + r, y + height);
+    context.quadraticCurveTo(x, y + height, x, y + height - r);
+    context.lineTo(x, y + r);
+    context.quadraticCurveTo(x, y, x + r, y);
+    context.closePath();
+  }
 
-  people.forEach((p, idx) => {
-    const mid = idx * step + step / 2 + ANGLE_OFFSET;
-    const pos = pointOnCircle(CAKE_RADIUS * CANDLE_RADIUS_RATIO, mid);
+  function createNameSprite(label, color) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 640;
+    canvas.height = 176;
+    const context = canvas.getContext("2d");
+
+    roundedRectangle(context, 12, 12, 616, 152, 34);
+    context.fillStyle = "rgba(255,250,238,0.96)";
+    context.fill();
+    context.lineWidth = 10;
+    context.strokeStyle = color;
+    context.stroke();
+
+    context.fillStyle = "#33231f";
+    context.font = "800 54px Arial, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(label, 320, 90, 540);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(2.25, 0.62, 1);
+    return sprite;
+  }
+
+  function buildWedgeShape(radius, startDeg, endDeg) {
+    const shape = new THREE.Shape();
+    const segments = Math.max(6, Math.ceil((endDeg - startDeg) / 3));
+    shape.moveTo(0, 0);
+    for (let i = 0; i <= segments; i++) {
+      const angle = startDeg + (endDeg - startDeg) * (i / segments);
+      const point = pointOnCircle(radius, angle);
+      shape.lineTo(point.x, -point.z);
+    }
+    shape.lineTo(0, 0);
+    return shape;
+  }
+
+  function createChair(person, direction) {
     const group = new THREE.Group();
-    group.position.set(pos.x, CAKE_HEIGHT, pos.z);
-    cakeGroup.add(group);
+    const wood = new THREE.MeshStandardMaterial({ color: 0x6f3e28, roughness: 0.82 });
+    const cushion = new THREE.MeshStandardMaterial({ color: new THREE.Color(person.color), roughness: 0.7 });
 
-    const stick = new THREE.Mesh(
-      new THREE.CylinderGeometry(CANDLE_STICK_R, CANDLE_STICK_R, CANDLE_STICK_H, 14),
-      new THREE.MeshStandardMaterial({ color: p.color })
-    );
-    stick.position.y = CANDLE_STICK_H / 2;
-    group.add(stick);
+    const seat = setShadow(new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.22, 1.35), cushion), true, true);
+    seat.position.y = 0.78;
+    group.add(seat);
 
-    [0.32, 0.68].forEach((f) => {
-      const band = new THREE.Mesh(
-        new THREE.CylinderGeometry(CANDLE_STICK_R * 1.05, CANDLE_STICK_R * 1.05, CANDLE_STICK_H * 0.1, 14),
-        new THREE.MeshStandardMaterial({ color: 0xffffff })
-      );
-      band.position.y = CANDLE_STICK_H * f;
-      group.add(band);
+    const back = setShadow(new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.55, 0.2), wood), true, true);
+    back.position.set(0, 1.48, 0.57);
+    group.add(back);
+
+    const slat = setShadow(new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.64, 0.12), cushion), true, true);
+    slat.position.set(0, 1.55, 0.43);
+    group.add(slat);
+
+    [[-0.57, -0.48], [0.57, -0.48], [-0.57, 0.48], [0.57, 0.48]].forEach(([x, z]) => {
+      const leg = setShadow(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.82, 0.14), wood), true, true);
+      leg.position.set(x, 0.38, z);
+      group.add(leg);
     });
 
-    const wick = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.018, 0.018, 0.16, 6),
-      new THREE.MeshStandardMaterial({ color: 0x3a2b21 })
-    );
-    wick.position.y = CANDLE_STICK_H + 0.08;
-    group.add(wick);
-
-    const flameGroup = new THREE.Group();
-    flameGroup.position.y = CANDLE_STICK_H + 0.18;
-    group.add(flameGroup);
-
-    const flame = new THREE.Mesh(
-      new THREE.ConeGeometry(0.1, 0.3, 12),
-      new THREE.MeshStandardMaterial({ color: 0xffb347, emissive: 0xff6a1a, emissiveIntensity: 1.2, transparent: true })
-    );
-    flame.position.y = 0.15;
-    flameGroup.add(flame);
-
-    const glow = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: glowTexture, color: 0xffcf88, transparent: true, opacity: 0.5, depthWrite: false })
-    );
-    glow.scale.set(0.55, 0.55, 1);
-    glow.position.y = 0.12;
-    flameGroup.add(glow);
-
-    const light = new THREE.PointLight(0xffb066, 0.55, 2.4, 2);
-    light.position.y = 0.18;
-    flameGroup.add(light);
-
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.26, 0.34, 28),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, side: THREE.DoubleSide })
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.015;
-    group.add(ring);
-
-    candles.set(p.id, { group, flameGroup, flame, glow, light, ring, angleMid: mid, blownOut: false, seed: Math.random() * 10 });
-  });
-
-  let baseRotationY = 0;
-  let spinning = false;
-  let armedId = null;
-  let interactive = false;
-  const sliceClickListeners = [];
-  const puffs = [];
-  const activeTweens = [];
-  const clock = new THREE.Clock();
-
-  function resize() {
-    const w = container.clientWidth || 1;
-    const h = container.clientHeight || 1;
-    renderer.setSize(w, h, false);
-    const aspect = w / h;
-    camera.left = -viewSize * aspect;
-    camera.right = viewSize * aspect;
-    camera.top = viewSize;
-    camera.bottom = -viewSize;
-    camera.updateProjectionMatrix();
+    group.rotation.y = Math.atan2(direction.x, direction.z);
+    return group;
   }
-  const resizeObserver = new ResizeObserver(resize);
-  resizeObserver.observe(container);
-  resize();
 
-  function addTween({ duration, ease = easeOutCubic, onUpdate, onComplete }) {
-    return new Promise((resolve) => {
-      activeTweens.push({
-        start: performance.now(),
-        duration,
-        ease,
-        onUpdate,
-        onComplete: () => {
-          if (onComplete) onComplete();
-          resolve();
-        },
+  function createPlate(person) {
+    const group = new THREE.Group();
+    const plate = setShadow(
+      new THREE.Mesh(
+        new THREE.CylinderGeometry(0.72, 0.76, 0.08, 40),
+        new THREE.MeshStandardMaterial({ color: 0xfffbef, roughness: 0.28, metalness: 0.02 })
+      ),
+      true,
+      true
+    );
+    group.add(plate);
+
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(0.59, 0.045, 10, 42),
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(person.color), roughness: 0.35 })
+    );
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = 0.075;
+    group.add(rim);
+    return group;
+  }
+
+  function createSpoon() {
+    const group = new THREE.Group();
+    const metal = new THREE.MeshStandardMaterial({ color: 0xcbd0d7, metalness: 0.8, roughness: 0.22 });
+    const handle = setShadow(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.045, 0.92), metal), true, true);
+    group.add(handle);
+    const bowl = setShadow(new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 10), metal), true, true);
+    bowl.scale.set(0.72, 0.25, 1);
+    bowl.position.z = -0.52;
+    group.add(bowl);
+    return group;
+  }
+
+  function createBeer() {
+    const group = new THREE.Group();
+    const glass = new THREE.MeshPhysicalMaterial({
+      color: 0xe9f4ff,
+      transparent: true,
+      opacity: 0.3,
+      roughness: 0.08,
+      transmission: 0.45,
+      side: THREE.DoubleSide,
+    });
+    const amber = new THREE.MeshStandardMaterial({ color: 0xe9981d, transparent: true, opacity: 0.88, roughness: 0.25 });
+    const foam = new THREE.MeshStandardMaterial({ color: 0xfff7dc, roughness: 0.9 });
+
+    const drink = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.22, 0.72, 28), amber), true, true);
+    drink.position.y = 0.38;
+    group.add(drink);
+
+    const outer = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.28, 0.86, 28, 1, true), glass);
+    outer.position.y = 0.43;
+    group.add(outer);
+
+    const foamTop = new THREE.Mesh(new THREE.CylinderGeometry(0.255, 0.255, 0.12, 28), foam);
+    foamTop.position.y = 0.77;
+    group.add(foamTop);
+
+    const handle = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.055, 10, 24, Math.PI * 1.5), glass);
+    handle.rotation.y = Math.PI / 2;
+    handle.position.set(0.28, 0.47, 0);
+    group.add(handle);
+    return group;
+  }
+
+  function createWine() {
+    const group = new THREE.Group();
+    const glass = new THREE.MeshPhysicalMaterial({
+      color: 0xf0f6ff,
+      transparent: true,
+      opacity: 0.28,
+      roughness: 0.05,
+      transmission: 0.5,
+      side: THREE.DoubleSide,
+    });
+    const wine = new THREE.MeshStandardMaterial({ color: 0x8e1834, transparent: true, opacity: 0.86, roughness: 0.25 });
+
+    const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.15, 0.62, 30, 1, true), glass);
+    bowl.position.y = 0.78;
+    group.add(bowl);
+
+    const liquid = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.18, 0.28, 30), wine);
+    liquid.position.y = 0.65;
+    group.add(liquid);
+
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.48, 12), glass);
+    stem.position.y = 0.28;
+    group.add(stem);
+
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.3, 0.045, 28), glass);
+    base.position.y = 0.03;
+    group.add(base);
+    return group;
+  }
+
+  function createPlaceSetting(person, index, angleMid) {
+    const directionPoint = pointOnCircle(1, angleMid);
+    const direction = new THREE.Vector3(directionPoint.x, 0, directionPoint.z).normalize();
+    const sideSeat = Math.abs(direction.x) > 0.5;
+    const chairPosition = sideSeat
+      ? new THREE.Vector3(Math.sign(direction.x) * 7.55, 0, 0)
+      : new THREE.Vector3(0, 0, Math.sign(direction.z) * 5.55);
+    const platePosition = sideSeat
+      ? new THREE.Vector3(Math.sign(direction.x) * 5.02, TABLE_SURFACE_Y + 0.1, 0)
+      : new THREE.Vector3(0, TABLE_SURFACE_Y + 0.1, Math.sign(direction.z) * 3.9);
+
+    const chair = createChair(person, direction);
+    chair.position.copy(chairPosition);
+
+    const group = new THREE.Group();
+    const plate = createPlate(person);
+    plate.position.copy(platePosition);
+    group.add(plate);
+
+    const tangent = new THREE.Vector3(-direction.z, 0, direction.x);
+    const spoon = createSpoon();
+    spoon.position.copy(platePosition).addScaledVector(tangent, -0.95);
+    spoon.position.y += 0.06;
+    spoon.rotation.y = Math.atan2(direction.x, direction.z);
+    group.add(spoon);
+
+    const drinkType = person.drink || (index % 2 === 0 ? "beer" : "wine");
+    const drink = drinkType === "wine" ? createWine() : createBeer();
+    drink.position.copy(platePosition).addScaledVector(tangent, 0.92).addScaledVector(direction, -0.12);
+    drink.position.y = TABLE_SURFACE_Y + 0.13;
+    group.add(drink);
+
+    const displayName = person.displayName || person.name;
+    const card = createNameSprite(displayName, person.color);
+    card.position.copy(platePosition).addScaledVector(direction, 0.78);
+    card.position.y = TABLE_SURFACE_Y + 0.68;
+    group.add(card);
+
+    return { chair, group, drinkType };
+  }
+
+  function createRoom(scene) {
+    scene.background = new THREE.Color(0x160c2b);
+    scene.fog = new THREE.FogExp2(0x160c2b, 0.025);
+
+    const floor = setShadow(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(46, 36),
+        new THREE.MeshStandardMaterial({ color: 0x24122f, roughness: 0.95 })
+      ),
+      false,
+      true
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.03;
+    scene.add(floor);
+
+    const colors = [0xff5d8f, 0x4fb6ff, 0x6fe0a0, 0xffcf56, 0xc58bff];
+    for (let i = 0; i < 54; i++) {
+      const confetti = new THREE.Mesh(
+        new THREE.BoxGeometry(0.11, 0.02, 0.25),
+        new THREE.MeshStandardMaterial({ color: colors[i % colors.length], roughness: 0.65 })
+      );
+      const angle = Math.random() * TAU;
+      const radius = 7 + Math.random() * 9;
+      confetti.position.set(Math.sin(angle) * radius, 0.02, Math.cos(angle) * radius);
+      confetti.rotation.y = Math.random() * TAU;
+      scene.add(confetti);
+    }
+  }
+
+  function createTable(scene) {
+    const group = new THREE.Group();
+    const wood = new THREE.MeshStandardMaterial({ color: 0x6c3a25, roughness: 0.83 });
+    const cloth = new THREE.MeshStandardMaterial({ map: createCheckerTexture(), roughness: 0.78 });
+    const runner = new THREE.MeshStandardMaterial({ color: 0xffe6a8, roughness: 0.88 });
+
+    const top = setShadow(new THREE.Mesh(new THREE.BoxGeometry(13.5, 0.34, 9.55), wood), true, true);
+    top.position.y = 1.34;
+    group.add(top);
+
+    const clothTop = setShadow(new THREE.Mesh(new THREE.BoxGeometry(13.66, 0.15, 9.7), cloth), true, true);
+    clothTop.position.y = 1.55;
+    group.add(clothTop);
+
+    const tableRunner = setShadow(new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.045, 9.74), runner), true, true);
+    tableRunner.position.y = TABLE_SURFACE_Y + 0.015;
+    group.add(tableRunner);
+
+    [[-5.6, -3.6], [5.6, -3.6], [-5.6, 3.6], [5.6, 3.6]].forEach(([x, z]) => {
+      const leg = setShadow(new THREE.Mesh(new THREE.BoxGeometry(0.48, 1.35, 0.48), wood), true, true);
+      leg.position.set(x, 0.66, z);
+      group.add(leg);
+    });
+
+    scene.add(group);
+    return group;
+  }
+
+  function createCake(scene, people, glowTexture) {
+    const cakeRoot = new THREE.Group();
+    cakeRoot.position.y = TABLE_SURFACE_Y + 0.09;
+    scene.add(cakeRoot);
+
+    const stand = setShadow(
+      new THREE.Mesh(
+        new THREE.CylinderGeometry(CAKE_RADIUS + 0.48, CAKE_RADIUS + 0.58, 0.16, 64),
+        new THREE.MeshStandardMaterial({ color: 0xf4e5ce, metalness: 0.08, roughness: 0.35 })
+      ),
+      true,
+      true
+    );
+    stand.position.y = -0.09;
+    cakeRoot.add(stand);
+
+    const spinGroup = new THREE.Group();
+    cakeRoot.add(spinGroup);
+
+    const slices = new Map();
+    const candles = new Map();
+    const clickableMeshes = [];
+    const step = 360 / people.length;
+
+    people.forEach((person, personIndex) => {
+      const start = personIndex * step + ANGLE_OFFSET;
+      const subStep = step / BITE_STEPS;
+      const segments = [];
+
+      for (let biteIndex = 0; biteIndex < BITE_STEPS; biteIndex++) {
+        const segmentStart = start + biteIndex * subStep;
+        const segmentEnd = segmentStart + subStep;
+        const geometry = new THREE.ExtrudeGeometry(buildWedgeShape(CAKE_RADIUS, segmentStart, segmentEnd), {
+          depth: CAKE_HEIGHT,
+          bevelEnabled: false,
+          curveSegments: 1,
+        });
+        const capMaterial = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(person.color),
+          roughness: 0.55,
+          transparent: true,
+        });
+        const sideMaterial = new THREE.MeshStandardMaterial({
+          color: 0xd69a55,
+          roughness: 0.9,
+          transparent: true,
+        });
+        const mesh = setShadow(new THREE.Mesh(geometry, [capMaterial, sideMaterial]), true, true);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.userData = { personId: person.id, biteIndex };
+        spinGroup.add(mesh);
+        clickableMeshes.push(mesh);
+
+        const mid = segmentStart + subStep / 2;
+        const creamPoint = pointOnCircle(CAKE_RADIUS * 0.965, mid);
+        const cream = setShadow(
+          new THREE.Mesh(
+            new THREE.SphereGeometry(0.13, 12, 9),
+            new THREE.MeshStandardMaterial({ color: 0xfff7e8, roughness: 0.65 })
+          ),
+          true,
+          true
+        );
+        cream.position.set(creamPoint.x, CAKE_HEIGHT + 0.06, creamPoint.z);
+        spinGroup.add(cream);
+        segments.push({ mesh, capMaterial, sideMaterial, cream, mid });
+      }
+
+      slices.set(person.id, {
+        id: person.id,
+        personIndex,
+        angleMid: start + step / 2,
+        segments,
+        biteOrder: [0, 3, 1, 2],
+        bites: 0,
+        biting: false,
+        removed: false,
       });
     });
-  }
 
-  function spawnPuffsAt(worldPos) {
-    for (let i = 0; i < 7; i++) {
-      const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.05 + Math.random() * 0.05, 8, 8),
-        new THREE.MeshBasicMaterial({ color: 0xf2f2f2, transparent: true, opacity: 0.8 })
-      );
-      mesh.position.copy(worldPos);
-      mesh.position.x += (Math.random() - 0.5) * 0.15;
-      mesh.position.z += (Math.random() - 0.5) * 0.15;
-      scene.add(mesh);
-      puffs.push({ mesh, life: 0, duration: 0.9 + Math.random() * 0.3, drift: (Math.random() - 0.5) * 0.4 });
-    }
-  }
-
-  function animate() {
-    const t = clock.getElapsedTime();
-    const dt = clock.getDelta();
-
-    candles.forEach((c, id) => {
-      if (!c.blownOut) {
-        const s = 1 + 0.06 * Math.sin(t * 9 + c.seed);
-        c.flameGroup.scale.set(s, 1 + 0.09 * Math.cos(t * 7.5 + c.seed), s);
-        c.flameGroup.rotation.z = 0.06 * Math.sin(t * 5 + c.seed);
-        c.glow.material.opacity = 0.42 + 0.12 * Math.sin(t * 6 + c.seed);
-      }
-      if (id === armedId) {
-        c.ring.material.opacity = 0.3 + 0.28 * Math.sin(t * 4.2);
-      } else if (c.ring.material.opacity > 0) {
-        c.ring.material.opacity = Math.max(0, c.ring.material.opacity - dt * 2);
-      }
-    });
-
-    if (!spinning) {
-      cakeGroup.rotation.y = baseRotationY + 0.055 * Math.sin(t * 0.65);
-    }
-
-    for (let i = puffs.length - 1; i >= 0; i--) {
-      const puff = puffs[i];
-      puff.life += dt;
-      const k = puff.life / puff.duration;
-      if (k >= 1) {
-        scene.remove(puff.mesh);
-        puffs.splice(i, 1);
-        continue;
-      }
-      puff.mesh.position.y += dt * 0.9;
-      puff.mesh.position.x += puff.drift * dt;
-      puff.mesh.scale.setScalar(1 + k * 1.6);
-      puff.mesh.material.opacity = 0.75 * (1 - k);
-    }
-
-    for (let i = activeTweens.length - 1; i >= 0; i--) {
-      const tw = activeTweens[i];
-      const p = Math.min(1, (performance.now() - tw.start) / tw.duration);
-      tw.onUpdate(tw.ease(p));
-      if (p >= 1) {
-        activeTweens.splice(i, 1);
-        tw.onComplete();
-      }
-    }
-
-    renderer.render(scene, camera);
-    requestAnimationFrame(animate);
-  }
-  requestAnimationFrame(animate);
-
-  function spinToRandom(excludeIds) {
-    if (spinning) return Promise.resolve(null);
-    const candidates = people.filter((p) => !excludeIds.includes(p.id));
-    if (candidates.length === 0) return Promise.resolve(null);
-
-    spinning = true;
-    armedId = null;
-
-    const target = candidates[Math.floor(Math.random() * candidates.length)];
-    const candleInfo = candles.get(target.id);
-    const localRad = degToRad(candleInfo.angleMid);
-    const camAzimuth = Math.atan2(camera.position.x, camera.position.z);
-    const targetBase = camAzimuth - localRad;
-
-    const current = cakeGroup.rotation.y;
-    const delta = ((targetBase - current) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-    const extraTurns = 4 + Math.floor(Math.random() * 3);
-    const finalRotation = current + delta + extraTurns * Math.PI * 2;
-
-    return addTween({
-      duration: SPIN_DURATION_MS,
-      ease: easeInOutCubic,
-      onUpdate: (k) => {
-        cakeGroup.rotation.y = current + (finalRotation - current) * k;
-      },
-      onComplete: () => {
-        baseRotationY = finalRotation % (Math.PI * 2);
-        cakeGroup.rotation.y = baseRotationY;
-        spinning = false;
-        armedId = target.id;
-      },
-    }).then(() => target.id);
-  }
-
-  function clearArmedHighlight() {
-    armedId = null;
-  }
-
-  function blowOutCandle(id) {
-    const c = candles.get(id);
-    if (!c || c.blownOut) return Promise.resolve();
-    c.blownOut = true;
-    if (armedId === id) armedId = null;
-
-    const worldPos = new THREE.Vector3();
-    c.flameGroup.getWorldPosition(worldPos);
-    spawnPuffsAt(worldPos);
-
-    return addTween({
-      duration: BLOW_ANIM_MS,
-      ease: easeOutQuad,
-      onUpdate: (k) => {
-        c.flame.scale.setScalar(Math.max(0, 1 - k * 1.3));
-        c.flame.material.opacity = 1 - k;
-        c.glow.material.opacity = 0.5 * (1 - k);
-        c.light.intensity = 0.55 * (1 - k);
-      },
-      onComplete: () => {
-        c.flameGroup.visible = false;
-      },
-    });
-  }
-
-  function biteSlice(id) {
-    const s = slices.get(id);
-    if (!s || s.removed) return Promise.resolve();
-
-    const edge = pointOnCircle(CAKE_RADIUS * 0.92, s.angleMid);
-    const decal = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.3, 1.3),
-      new THREE.MeshBasicMaterial({ map: biteTexture, transparent: true, depthWrite: false })
+    const centerIcing = setShadow(
+      new THREE.Mesh(
+        new THREE.CylinderGeometry(0.36, 0.42, CAKE_HEIGHT + 0.1, 32),
+        new THREE.MeshStandardMaterial({ color: 0xfff4dc, roughness: 0.58 })
+      ),
+      true,
+      true
     );
-    decal.position.set(edge.x, CAKE_HEIGHT + 0.02, edge.z);
-    decal.rotation.x = -Math.PI / 2;
-    decal.rotation.z = -degToRad(s.angleMid);
-    decal.scale.setScalar(0.001);
-    cakeGroup.add(decal);
+    centerIcing.position.y = CAKE_HEIGHT / 2;
+    spinGroup.add(centerIcing);
 
-    return addTween({
-      duration: 220,
-      ease: easeOutCubic,
-      onUpdate: (k) => decal.scale.setScalar(0.001 + k * 0.999),
-    })
-      .then(
-        () =>
-          addTween({
-            duration: 160,
-            ease: (k) => k,
-            onUpdate: (k) => {
-              s.mesh.rotation.z = Math.sin(k * Math.PI * 4) * 0.03;
-            },
-          })
-      )
-      .then(() =>
-        addTween({
-          duration: BITE_ANIM_MS,
-          ease: easeOutCubic,
-          onUpdate: (k) => {
-            const sc = 1 - k * 0.85;
-            s.mesh.scale.set(sc, 1 - k * 0.7, sc);
-            s.mesh.position.y = -k * 0.6;
-            s.capMat.opacity = 1 - k;
-            s.sideMat.opacity = 1 - k;
-          },
-          onComplete: () => {
-            s.mesh.visible = false;
-            s.removed = true;
-            cakeGroup.remove(decal);
-          },
-        })
+    people.forEach((person, index) => {
+      const mid = index * step + step / 2 + ANGLE_OFFSET;
+      const position = pointOnCircle(CANDLE_RADIUS, mid);
+      const group = new THREE.Group();
+      group.position.set(position.x, CAKE_HEIGHT, position.z);
+      spinGroup.add(group);
+
+      const stickMaterial = new THREE.MeshStandardMaterial({ color: new THREE.Color(person.color), roughness: 0.5 });
+      const stick = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, CANDLE_HEIGHT, 18), stickMaterial), true, true);
+      stick.position.y = CANDLE_HEIGHT / 2;
+      group.add(stick);
+
+      [0.3, 0.66].forEach((fraction) => {
+        const band = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.105, 0.105, 0.1, 18),
+          new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 })
+        );
+        band.position.y = CANDLE_HEIGHT * fraction;
+        group.add(band);
+      });
+
+      const wick = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.017, 0.017, 0.16, 8),
+        new THREE.MeshStandardMaterial({ color: 0x35231b, roughness: 1 })
       );
+      wick.position.y = CANDLE_HEIGHT + 0.07;
+      group.add(wick);
+
+      const flameGroup = new THREE.Group();
+      flameGroup.position.y = CANDLE_HEIGHT + 0.16;
+      group.add(flameGroup);
+
+      const flameMaterial = new THREE.MeshStandardMaterial({
+        color: 0xffc04c,
+        emissive: 0xff6b18,
+        emissiveIntensity: 1.8,
+        transparent: true,
+      });
+      const flame = new THREE.Mesh(new THREE.ConeGeometry(0.105, 0.34, 16), flameMaterial);
+      flame.position.y = 0.17;
+      flameGroup.add(flame);
+
+      const glowMaterial = new THREE.SpriteMaterial({
+        map: glowTexture,
+        color: 0xffd48a,
+        transparent: true,
+        opacity: 0.52,
+        depthWrite: false,
+      });
+      const glow = new THREE.Sprite(glowMaterial);
+      glow.scale.set(0.68, 0.68, 1);
+      glow.position.y = 0.16;
+      flameGroup.add(glow);
+
+      const light = new THREE.PointLight(0xffad55, 0.8, 3.1, 2);
+      light.position.y = 0.2;
+      flameGroup.add(light);
+
+      const ringMaterial = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(person.color),
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.29, 0.43, 36), ringMaterial);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.025;
+      group.add(ring);
+
+      candles.set(person.id, {
+        id: person.id,
+        group,
+        flameGroup,
+        flame,
+        flameMaterial,
+        glow,
+        glowMaterial,
+        light,
+        ring,
+        ringMaterial,
+        angleMid: mid,
+        seed: Math.random() * 10,
+        blownOut: false,
+      });
+    });
+
+    return { cakeRoot, spinGroup, slices, candles, clickableMeshes };
   }
 
-  function setSlicesInteractive(v) {
-    interactive = v;
-  }
+  function createCake3D({ canvas, people }) {
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(global.devicePixelRatio || 1, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.12;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  function onSliceClick(cb) {
-    sliceClickListeners.push(cb);
-  }
+    const scene = new THREE.Scene();
+    createRoom(scene);
+    createTable(scene);
 
-  const raycaster = new THREE.Raycaster();
-  const pointerNDC = new THREE.Vector2();
+    scene.add(new THREE.HemisphereLight(0xeadfff, 0x27132f, 1.4));
+    const keyLight = new THREE.DirectionalLight(0xffe7bf, 3.2);
+    keyLight.position.set(6, 12, 7);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(2048, 2048);
+    keyLight.shadow.camera.left = -12;
+    keyLight.shadow.camera.right = 12;
+    keyLight.shadow.camera.top = 12;
+    keyLight.shadow.camera.bottom = -12;
+    scene.add(keyLight);
 
-  function handlePointer(ev) {
-    if (!interactive) return;
-    const rect = canvas.getBoundingClientRect();
-    pointerNDC.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-    pointerNDC.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
-    raycaster.setFromCamera(pointerNDC, camera);
-    const meshes = [...slices.values()].filter((s) => !s.removed).map((s) => s.mesh);
-    const hits = raycaster.intersectObjects(meshes, false);
-    if (hits.length > 0) {
-      const id = hits[0].object.userData.id;
-      sliceClickListeners.forEach((cb) => cb(id));
+    const fillLight = new THREE.PointLight(0x896dff, 35, 28, 2);
+    fillLight.position.set(-8, 7, -5);
+    scene.add(fillLight);
+    const warmLight = new THREE.PointLight(0xff9b55, 42, 24, 2);
+    warmLight.position.set(7, 5, 6);
+    scene.add(warmLight);
+
+    const step = 360 / people.length;
+    const placeSettings = [];
+    people.forEach((person, index) => {
+      const angleMid = index * step + step / 2 + ANGLE_OFFSET;
+      const setting = createPlaceSetting(person, index, angleMid);
+      scene.add(setting.chair);
+      scene.add(setting.group);
+      placeSettings.push({ id: person.id, drinkType: setting.drinkType });
+    });
+
+    const cake = createCake(scene, people, createGlowTexture());
+    const { cakeRoot, spinGroup, slices, candles, clickableMeshes } = cake;
+
+    const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 120);
+    const cameraTarget = new THREE.Vector3(0, TABLE_SURFACE_Y + 0.72, 0);
+    const cameraHome = new THREE.Vector3();
+    const cameraClose = new THREE.Vector3();
+    let cameraFocus = 0;
+    let maxCameraFocus = 0;
+
+    let spinning = false;
+    let armedId = null;
+    let interactive = false;
+    let baseRotationY = 0;
+    let elapsed = 0;
+    let destroyed = false;
+    const puffs = [];
+    const activeTweens = [];
+    const sliceClickListeners = [];
+    const clock = new THREE.Clock();
+
+    function updateCamera() {
+      camera.position.copy(cameraHome).lerp(cameraClose, cameraFocus);
+      camera.lookAt(cameraTarget);
     }
+
+    function resize() {
+      const width = Math.max(1, canvas.clientWidth);
+      const height = Math.max(1, canvas.clientHeight);
+      const aspect = width / height;
+      renderer.setSize(width, height, false);
+      camera.aspect = aspect;
+      camera.fov = aspect < 0.72 ? 44 : aspect < 1 ? 40 : 35;
+      camera.updateProjectionMatrix();
+
+      if (aspect < 0.78) {
+        cameraHome.set(13.8, 10.8, 15.2);
+        cameraClose.set(7.8, 6.25, 8.8);
+      } else {
+        cameraHome.set(11.1, 8.15, 12.4);
+        cameraClose.set(6.75, 5.25, 7.55);
+      }
+      updateCamera();
+    }
+
+    let resizeObserver = null;
+    if (global.ResizeObserver) {
+      resizeObserver = new ResizeObserver(resize);
+      resizeObserver.observe(canvas);
+    } else {
+      global.addEventListener("resize", resize);
+    }
+    resize();
+
+    function addTween({ duration, ease = easeOutCubic, onUpdate, onComplete }) {
+      return new Promise((resolve) => {
+        activeTweens.push({
+          start: performance.now(),
+          duration: Math.max(1, duration),
+          ease,
+          onUpdate,
+          onComplete: () => {
+            if (onComplete) onComplete();
+            resolve();
+          },
+        });
+      });
+    }
+
+    function spawnSmoke(worldPosition) {
+      for (let i = 0; i < 8; i++) {
+        const material = new THREE.MeshBasicMaterial({ color: 0xf7f2ec, transparent: true, opacity: 0.78, depthWrite: false });
+        const puff = new THREE.Mesh(new THREE.SphereGeometry(0.055 + Math.random() * 0.055, 8, 8), material);
+        puff.position.copy(worldPosition);
+        puff.position.x += (Math.random() - 0.5) * 0.14;
+        puff.position.z += (Math.random() - 0.5) * 0.14;
+        scene.add(puff);
+        puffs.push({
+          mesh: puff,
+          material,
+          life: 0,
+          duration: 0.85 + Math.random() * 0.45,
+          driftX: (Math.random() - 0.5) * 0.32,
+          driftZ: (Math.random() - 0.5) * 0.18,
+        });
+      }
+    }
+
+    function animate() {
+      if (destroyed) return;
+      const deltaTime = Math.min(clock.getDelta(), 0.05);
+      elapsed += deltaTime;
+
+      if (!spinning) {
+        spinGroup.rotation.y = baseRotationY + (REDUCED_MOTION ? 0 : 0.045 * Math.sin(elapsed * 0.62));
+      }
+      if (!REDUCED_MOTION) {
+        cakeRoot.rotation.x = 0.012 * Math.sin(elapsed * 0.74);
+        cakeRoot.rotation.z = 0.016 * Math.cos(elapsed * 0.61);
+      }
+
+      candles.forEach((candle, id) => {
+        if (!candle.blownOut) {
+          const pulse = 1 + 0.07 * Math.sin(elapsed * 9 + candle.seed);
+          candle.flameGroup.scale.set(pulse, 1 + 0.1 * Math.cos(elapsed * 7.5 + candle.seed), pulse);
+          candle.flameGroup.rotation.z = 0.06 * Math.sin(elapsed * 5 + candle.seed);
+          candle.glowMaterial.opacity = 0.45 + 0.13 * Math.sin(elapsed * 6 + candle.seed);
+        }
+        if (id === armedId) {
+          candle.ringMaterial.opacity = 0.42 + 0.35 * Math.sin(elapsed * 5.2);
+          const ringScale = 1 + 0.12 * Math.sin(elapsed * 5.2);
+          candle.ring.scale.setScalar(ringScale);
+        } else if (candle.ringMaterial.opacity > 0) {
+          candle.ringMaterial.opacity = Math.max(0, candle.ringMaterial.opacity - deltaTime * 2.6);
+        }
+      });
+
+      for (let i = puffs.length - 1; i >= 0; i--) {
+        const puff = puffs[i];
+        puff.life += deltaTime;
+        const progress = puff.life / puff.duration;
+        if (progress >= 1) {
+          scene.remove(puff.mesh);
+          puff.mesh.geometry.dispose();
+          puff.material.dispose();
+          puffs.splice(i, 1);
+          continue;
+        }
+        puff.mesh.position.y += deltaTime * 0.82;
+        puff.mesh.position.x += puff.driftX * deltaTime;
+        puff.mesh.position.z += puff.driftZ * deltaTime;
+        puff.mesh.scale.setScalar(1 + progress * 1.8);
+        puff.material.opacity = 0.76 * (1 - progress);
+      }
+
+      for (let i = activeTweens.length - 1; i >= 0; i--) {
+        const tween = activeTweens[i];
+        const progress = Math.min(1, (performance.now() - tween.start) / tween.duration);
+        tween.onUpdate(tween.ease(progress));
+        if (progress >= 1) {
+          activeTweens.splice(i, 1);
+          tween.onComplete();
+        }
+      }
+
+      updateCamera();
+      renderer.render(scene, camera);
+      global.requestAnimationFrame(animate);
+    }
+    global.requestAnimationFrame(animate);
+
+    async function spinToRandom(excludeIds) {
+      if (spinning) return null;
+      const excluded = new Set(excludeIds || []);
+      const candidates = people.filter((person) => !excluded.has(person.id));
+      if (candidates.length === 0) return null;
+
+      spinning = true;
+      armedId = null;
+      maxCameraFocus = 0;
+      const target = candidates[Math.floor(Math.random() * candidates.length)];
+      const candle = candles.get(target.id);
+      const localAngle = degToRad(candle.angleMid);
+      const cameraAzimuth = Math.atan2(cameraClose.x, cameraClose.z);
+      const desiredRotation = cameraAzimuth - localAngle;
+      const currentRotation = spinGroup.rotation.y;
+      const delta = ((desiredRotation - currentRotation) % TAU + TAU) % TAU;
+      const extraTurns = TEST_MODE ? 1 : 4 + Math.floor(Math.random() * 3);
+      const finalRotation = currentRotation + delta + extraTurns * TAU;
+
+      const focusStart = cameraFocus;
+      const zoomIn = addTween({
+        duration: CAMERA_IN_MS,
+        ease: easeOutCubic,
+        onUpdate: (progress) => {
+          cameraFocus = focusStart + (1 - focusStart) * progress;
+          maxCameraFocus = Math.max(maxCameraFocus, cameraFocus);
+        },
+      });
+      const spin = addTween({
+        duration: SPIN_DURATION_MS,
+        ease: easeInOutCubic,
+        onUpdate: (progress) => { spinGroup.rotation.y = currentRotation + (finalRotation - currentRotation) * progress; },
+      });
+
+      await Promise.all([zoomIn, spin]);
+      baseRotationY = ((finalRotation % TAU) + TAU) % TAU;
+      spinGroup.rotation.y = baseRotationY;
+
+      await addTween({
+        duration: CAMERA_OUT_MS,
+        ease: easeInOutCubic,
+        onUpdate: (progress) => { cameraFocus = 1 - progress; },
+        onComplete: () => { cameraFocus = 0; },
+      });
+
+      spinning = false;
+      armedId = target.id;
+      return target.id;
+    }
+
+    function clearArmedHighlight() {
+      armedId = null;
+    }
+
+    function blowOutCandle(id) {
+      const candle = candles.get(id);
+      if (!candle || candle.blownOut) return Promise.resolve(false);
+      candle.blownOut = true;
+      if (armedId === id) armedId = null;
+
+      const worldPosition = new THREE.Vector3();
+      candle.flameGroup.getWorldPosition(worldPosition);
+      spawnSmoke(worldPosition);
+
+      return addTween({
+        duration: BLOW_DURATION_MS,
+        ease: easeOutCubic,
+        onUpdate: (progress) => {
+          const scale = Math.max(0.001, 1 - progress * 1.25);
+          candle.flame.scale.setScalar(scale);
+          candle.flameMaterial.opacity = 1 - progress;
+          candle.glowMaterial.opacity = 0.52 * (1 - progress);
+          candle.light.intensity = 0.8 * (1 - progress);
+        },
+        onComplete: () => { candle.flameGroup.visible = false; },
+      }).then(() => true);
+    }
+
+    async function biteSlice(id) {
+      const slice = slices.get(id);
+      if (!interactive || !slice || slice.removed || slice.biting) {
+        return slice ? { complete: slice.removed, bites: slice.bites, total: BITE_STEPS, ignored: true } : null;
+      }
+
+      slice.biting = true;
+      const segmentIndex = slice.biteOrder[slice.bites];
+      const segment = slice.segments[segmentIndex];
+      const startPosition = segment.mesh.position.clone();
+      const outwardPoint = pointOnCircle(0.5, segment.mid);
+
+      await addTween({
+        duration: BITE_DURATION_MS,
+        ease: easeInCubic,
+        onUpdate: (progress) => {
+          segment.mesh.position.set(
+            startPosition.x + outwardPoint.x * progress,
+            startPosition.y + 0.72 * progress,
+            startPosition.z + outwardPoint.z * progress
+          );
+          segment.mesh.rotation.z = Math.sin(progress * Math.PI * 3) * 0.035;
+          segment.mesh.scale.setScalar(Math.max(0.04, 1 - progress * 0.94));
+          segment.capMaterial.opacity = 1 - progress;
+          segment.sideMaterial.opacity = 1 - progress;
+          segment.cream.scale.setScalar(Math.max(0.04, 1 - progress));
+        },
+      });
+
+      segment.mesh.visible = false;
+      segment.cream.visible = false;
+      slice.bites += 1;
+      slice.biting = false;
+      slice.removed = slice.bites >= BITE_STEPS;
+
+      if (slice.removed) {
+        const candle = candles.get(id);
+        if (candle) candle.group.visible = false;
+      }
+
+      return {
+        complete: slice.removed,
+        bites: slice.bites,
+        total: BITE_STEPS,
+        remaining: Math.max(0, BITE_STEPS - slice.bites),
+      };
+    }
+
+    function setSlicesInteractive(value) {
+      interactive = Boolean(value);
+      canvas.classList.toggle("is-biteable", interactive);
+    }
+
+    function onSliceClick(callback) {
+      sliceClickListeners.push(callback);
+    }
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    function handlePointer(event) {
+      if (!interactive) return;
+      const rect = canvas.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const visibleMeshes = clickableMeshes.filter((mesh) => mesh.visible);
+      const hits = raycaster.intersectObjects(visibleMeshes, false);
+      if (hits.length === 0) return;
+      const id = hits[0].object.userData.personId;
+      sliceClickListeners.forEach((callback) => callback(id));
+    }
+    canvas.addEventListener("pointerdown", handlePointer);
+
+    function getSnapshot() {
+      const sliceState = {};
+      slices.forEach((slice, id) => {
+        sliceState[id] = { bites: slice.bites, total: BITE_STEPS, removed: slice.removed, biting: slice.biting };
+      });
+      return {
+        spinning,
+        armedId,
+        interactive,
+        cameraFocus,
+        maxCameraFocus,
+        sliceState,
+        placeSettings: placeSettings.map((setting) => ({ ...setting })),
+      };
+    }
+
+    return {
+      spinToRandom,
+      clearArmedHighlight,
+      blowOutCandle,
+      biteSlice,
+      setSlicesInteractive,
+      onSliceClick,
+      getSnapshot,
+      dispose() {
+        destroyed = true;
+        if (resizeObserver) resizeObserver.disconnect();
+        else global.removeEventListener("resize", resize);
+        canvas.removeEventListener("pointerdown", handlePointer);
+        renderer.dispose();
+      },
+    };
   }
-  canvas.addEventListener("pointerdown", handlePointer);
 
-  return {
-    spinToRandom,
-    clearArmedHighlight,
-    blowOutCandle,
-    biteSlice,
-    setSlicesInteractive,
-    onSliceClick,
-    dispose() {
-      resizeObserver.disconnect();
-      canvas.removeEventListener("pointerdown", handlePointer);
-    },
-  };
-}
-
-window.Cake3D = { create: createCake3D };
+  global.Cake3D = { create: createCake3D, BITE_STEPS };
+})(window);
