@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 const cdpPort = process.env.CDP_PORT || "9223";
 const siteUrl = process.env.SITE_URL || "http://127.0.0.1:4173/index.html?test=1";
 const screenshotPath = process.env.SCREENSHOT_PATH || "/tmp/cumpleanos-fatal-3d.png";
-const seatScreenshotPath = process.env.SEAT_SCREENSHOT_PATH || "/tmp/cumpleanos-fatal-seat.png";
+const spinScreenshotPath = process.env.SPIN_SCREENSHOT_PATH || "/tmp/cumpleanos-fatal-spin.png";
 const mobileScreenshotPath = process.env.MOBILE_SCREENSHOT_PATH || "/tmp/cumpleanos-fatal-mobile.png";
 const separator = siteUrl.includes("?") ? "&" : "?";
 const runId = Date.now();
@@ -22,6 +22,10 @@ const carlosPageUrl = carlosPageUrlObject.href;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function closeEnough(first, second, tolerance = 0.03) {
+  return Math.abs(first - second) <= tolerance;
 }
 
 async function waitFor(check, message, timeoutMs = 15000) {
@@ -62,10 +66,9 @@ socket.addEventListener("message", (event) => {
   }
   if (message.method === "Log.entryAdded" && message.params.entry.level === "error") {
     const entry = message.params.entry;
-    const expectedMissingAsset = entry.source === "network" && /404|Failed to load resource/i.test(entry.text);
-    if (!entry.url?.includes("/assets/audio/") && !entry.url?.includes("/assets/lyrics/") && !expectedMissingAsset) {
-      errors.push(entry.text);
-    }
+    const optionalAsset = /\/assets\/(audio|lyrics|song-photos|comics)\//.test(entry.url || entry.text);
+    const missingAsset = entry.source === "network" && /404|Failed to load resource/i.test(entry.text);
+    if (!optionalAsset && !missingAsset) errors.push(entry.text);
   }
 });
 
@@ -91,6 +94,11 @@ async function evaluate(expression) {
 
 async function state() {
   return evaluate("window.__birthdayTest && window.__birthdayTest.getState()");
+}
+
+async function clickAt(x, y) {
+  await send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 });
+  await send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 });
 }
 
 await Promise.all([send("Page.enable"), send("Runtime.enable"), send("Log.enable"), send("Network.enable")]);
@@ -122,6 +130,8 @@ const initialUi = await evaluate(`(() => {
     firstLink: document.querySelector(".person-link")?.getAttribute("href"),
     description: document.querySelector('meta[name="description"]')?.content,
     socialImage: document.querySelector('meta[property="og:image"]')?.content,
+    configKeys: CONFIG.people.map((person) => Object.keys(person).sort()),
+    configNames: CONFIG.people.map((person) => person.name),
   };
 })()`);
 assert(initialUi.textLength > 80, "La página se ha renderizado vacía");
@@ -129,20 +139,33 @@ assert(initialUi.fallbackHidden, "Se mostró el fallback en vez de la escena 3D"
 assert(initialUi.canvas.width >= 1000 && initialUi.canvas.height >= 700, "El canvas no ocupa la escena");
 assert(initialUi.dockBottom === 800, "La barra de personas no está fijada abajo");
 assert(initialUi.chipCount === 4, "No aparecen las cuatro personas");
-assert(initialUi.chipNames[0] === "Geido Senchaz", "El nuevo nombre de Geido no aparece en la mesa");
+assert(initialUi.chipNames[0] === "Geido Senchaz", "El nombre de Geido no aparece en la mesa");
 assert(initialUi.firstLink === "personas/geido-senchaz.html", "La página individual de Geido no está enlazada");
-assert(initialUi.description.includes("Geido"), "Los metadatos principales conservan el nombre antiguo");
-assert(initialUi.socialImage.endsWith("/public/og.png"), "La nueva tarjeta social no está enlazada");
+assert(initialUi.description.includes("Geido"), "Los metadatos principales no incluyen a Geido");
+assert(initialUi.socialImage.endsWith("/public/og.png"), "La tarjeta social no está enlazada");
 assert(!initialUi.buttonDisabled, "La ruleta empieza bloqueada");
+const expectedConfigKeys = ["audio", "color", "comics", "id", "lyrics", "name", "songPhotos"];
+assert(
+  initialUi.configKeys.every((keys) => JSON.stringify(keys) === JSON.stringify(expectedConfigKeys)),
+  "config.js no conserva exactamente {id,name,color,audio,lyrics,songPhotos,comics}"
+);
+assert(
+  JSON.stringify(initialUi.configNames) === JSON.stringify(["Geido Senchaz", "Diego Sánchez (2)", "Carlos Conde", "Daviles"]),
+  "Los nombres de las cuatro personas no son los esperados"
+);
 
 const screenshot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
 await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
 
-const sceneState = (await state()).scene;
+const loadedState = await waitFor(async () => {
+  const current = await state();
+  return current.scene.walkers.every((walker) => walker.phraseCount > 0) ? current : null;
+}, "No se cargaron las frases de los 16 NPC");
+const sceneState = loadedState.scene;
 assert(sceneState.placeSettings.length === 4, "No hay cuatro sitios preparados en la mesa");
 assert(
   JSON.stringify(sceneState.placeSettings.map((setting) => setting.drinkType)) === JSON.stringify(["beer", "wine", "beer", "wine"]),
-  "Las bebidas no respetan config.js"
+  "Las bebidas alternas no se han creado"
 );
 assert(sceneState.placeSettings.every((setting) => setting.hasLiquid), "Hay vasos sin líquido visible");
 assert(
@@ -150,13 +173,25 @@ assert(
   "A una cerveza le falta espuma"
 );
 assert(sceneState.productionSpinDurationMs >= 7000, "La ruleta de producción no es lo bastante lenta");
-assert(sceneState.walkers.length >= 8, "Faltan invitados low-poly caminando por la sala");
-assert(sceneState.walkers.filter((walker) => walker.kind === "girl").length >= 3, "Faltan chicas entre los invitados");
+assert(sceneState.cakeProfile.style === "minecraft-block", "La tarta no usa la geometría Minecraft");
+assert(sceneState.cakeProfile.shape === "rectangular-prism", "La tarta no es un prisma rectangular");
+assert(sceneState.cakeProfile.quadrantCount === 4, "La tapa no está dividida en una cuadrícula 2x2");
+assert(sceneState.cakeProfile.biteSegmentsPerQuadrant === 4, "Cada cuadrante no tiene cuatro mordiscos triangulares");
+assert(sceneState.cakeProfile.redCubeCount === 8, "Faltan los pequeños cubos rojos de la tapa");
+assert(sceneState.walkers.length === 16, "No hay exactamente 16 invitados low-poly");
+assert(
+  JSON.stringify(sceneState.walkers.map((walker) => walker.id)) === JSON.stringify(Array.from({ length: 16 }, (_, index) => `npc-${String(index + 1).padStart(2, "0")}`)),
+  "Los NPC no tienen los ids npc-01 a npc-16"
+);
+assert(sceneState.walkers.filter((walker) => walker.kind === "girl").length >= 6, "Faltan chicas entre los invitados");
 assert(
   ["hat", "cap", "beard"].every((accessory) => sceneState.walkers.some((walker) => walker.accessory === accessory)),
-  "Los invitados no tienen suficientes rasgos variados"
+  "Los invitados no tienen sombreros, gorras y barbas"
 );
+assert(sceneState.walkers.every((walker) => walker.phraseCount >= 3), "Algún NPC no recibió sus frases JSON");
 assert(sceneState.walkers.every((walker) => !walker.intersectsFurniture), "Un invitado atraviesa la mesa o una silla");
+assert(closeEnough(sceneState.cameraPose.radius, sceneState.overviewPose.radius), "La cámara inicial no usa la vista general");
+assert(closeEnough(sceneState.cameraPose.height, sceneState.overviewPose.height), "La altura inicial no muestra la mesa desde fuera");
 
 const walkerBefore = sceneState.walkers.map((walker) => walker.position);
 await new Promise((resolve) => setTimeout(resolve, 260));
@@ -170,7 +205,40 @@ assert(
 );
 assert(walkerAfter.every((walker) => !walker.intersectsFurniture), "Un invitado entró en la zona del mobiliario");
 
-const cakeDragStart = sceneState.cameraPose.azimuth;
+// Un clic real detiene al NPC, lo orienta a cámara y muestra su bocadillo.
+const npcTarget = walkerAfter.find((walker) => (
+  walker.screenPosition.visible && walker.screenPosition.x > 45 && walker.screenPosition.x < 1235 &&
+  walker.screenPosition.y > 135 && walker.screenPosition.y < 670
+));
+assert(npcTarget, "No hay ningún NPC visible disponible para probar el diálogo");
+await clickAt(npcTarget.screenPosition.x, npcTarget.screenPosition.y);
+const speakingNpc = await waitFor(async () => {
+  const walker = (await state()).scene.walkers.find((candidate) => candidate.id === npcTarget.id);
+  return walker && walker.paused && walker.dialogVisible ? walker : null;
+}, "Pinchar el NPC no lo detuvo ni mostró el bocadillo");
+const dialogText = await evaluate("document.querySelector('.npc-dialog')?.textContent || ''");
+assert(dialogText.includes(speakingNpc.name), "El bocadillo no muestra el nombre leído de phrases.json");
+const pausedPosition = speakingNpc.position;
+await new Promise((resolve) => setTimeout(resolve, 150));
+const stillPaused = (await state()).scene.walkers.find((walker) => walker.id === npcTarget.id);
+assert(
+  Math.hypot(stillPaused.position.x - pausedPosition.x, stillPaused.position.z - pausedPosition.z) < 0.002,
+  "El NPC siguió caminando mientras hablaba"
+);
+await clickAt(stillPaused.screenPosition.x, stillPaused.screenPosition.y);
+await waitFor(async () => {
+  const walker = (await state()).scene.walkers.find((candidate) => candidate.id === npcTarget.id);
+  return walker && !walker.paused && !walker.dialogVisible;
+}, "El segundo toque no ocultó el bocadillo ni reanudó al NPC");
+await new Promise((resolve) => setTimeout(resolve, 180));
+const resumedNpc = (await state()).scene.walkers.find((walker) => walker.id === npcTarget.id);
+assert(
+  Math.hypot(resumedNpc.position.x - pausedPosition.x, resumedNpc.position.z - pausedPosition.z) > 0.005,
+  "El NPC no reanudó su paseo"
+);
+
+// La tarta bloquea el arrastre, pero una zona vacía permite la órbita horizontal.
+const cakeDragStart = (await state()).scene.cameraPose.azimuth;
 await send("Input.dispatchMouseEvent", { type: "mousePressed", x: 640, y: 410, button: "left", buttons: 1, clickCount: 1 });
 await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 750, y: 410, button: "left", buttons: 1 });
 await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 750, y: 410, button: "left", buttons: 0, clickCount: 1 });
@@ -178,60 +246,88 @@ const cakeDragEnd = (await state()).scene.cameraPose.azimuth;
 assert(Math.abs(cakeDragEnd - cakeDragStart) < 0.02, "Arrastrar sobre la tarta movió la cámara");
 
 const cameraBeforeDrag = cakeDragEnd;
-await send("Input.dispatchMouseEvent", { type: "mousePressed", x: 25, y: 420, button: "left", buttons: 1, clickCount: 1 });
-await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 135, y: 420, button: "left", buttons: 1 });
-await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 135, y: 420, button: "left", buttons: 0, clickCount: 1 });
+await send("Input.dispatchMouseEvent", { type: "mousePressed", x: 600, y: 180, button: "left", buttons: 1, clickCount: 1 });
+await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 710, y: 180, button: "left", buttons: 1 });
+await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 710, y: 180, button: "left", buttons: 0, clickCount: 1 });
 const cameraAfterDrag = (await state()).scene.cameraPose.azimuth;
 assert(Math.abs(cameraAfterDrag - cameraBeforeDrag) > 0.3, "El arrastre con ratón no hizo orbitar la cámara");
 
+// La letra avanza como un único scroll continuo y las fotos cambian durante la canción.
+const pixel = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 await evaluate(`(() => {
-  window.__lyricPreview = window.__birthdayTest.previewLyrics(["Primera línea", "Segunda línea", "Tercera línea"], 420);
+  window.__songPreview = window.__birthdayTest.previewSong(
+    ["Título de prueba", "Primera línea", "Segunda línea", "Tercera línea"],
+    720,
+    [${JSON.stringify(pixel)}, ${JSON.stringify(pixel)}]
+  );
   return true;
 })()`);
-await waitFor(async () => (await state()).karaoke.visible, "El karaoke de prueba no apareció");
-const seenLyrics = [];
-for (let sample = 0; sample < 12; sample++) {
-  const lyricState = (await state()).karaoke;
-  if (lyricState.visible && !seenLyrics.includes(lyricState.line)) seenLyrics.push(lyricState.line);
-  await new Promise((resolve) => setTimeout(resolve, 45));
+await waitFor(async () => (await state()).songExperience.visible, "La cortinilla de prueba no apareció");
+const crawlSamples = [];
+for (let sample = 0; sample < 5; sample++) {
+  await new Promise((resolve) => setTimeout(resolve, 90));
+  const songState = (await state()).songExperience;
+  if (songState.visible) crawlSamples.push(songState);
 }
-await evaluate("window.__lyricPreview");
-const karaokeAfter = (await state()).karaoke;
+assert(crawlSamples.length >= 3, "La cortinilla desapareció antes de poder comprobarla");
+assert(crawlSamples[0].title === "Título de prueba", "La primera línea no se muestra como título destacado");
 assert(
-  JSON.stringify(seenLyrics) === JSON.stringify(["Primera línea", "Segunda línea", "Tercera línea"]),
-  `Las líneas de karaoke no avanzaron proporcionalmente: ${seenLyrics.join(" / ")}`
+  JSON.stringify(crawlSamples[0].lines) === JSON.stringify(["Primera línea", "Segunda línea", "Tercera línea"]),
+  "La letra no conserva todas las líneas tras el título"
 );
-assert(!karaokeAfter.visible, "El karaoke no se ocultó al terminar la canción");
+assert(
+  crawlSamples.every((sample, index) => index === 0 || sample.progress >= crawlSamples[index - 1].progress) &&
+    crawlSamples.at(-1).progress - crawlSamples[0].progress > 0.25,
+  "La letra no avanza continuamente según la duración"
+);
+assert(new Set(crawlSamples.map((sample) => sample.transform)).size >= 3, "La cortinilla no cambia de posición de forma continua");
+assert(crawlSamples.some((sample) => sample.photoVisible), "Las fotos de canción no aparecen junto a la letra");
+assert(crawlSamples.some((sample) => sample.photoIndex === 1), "El carrusel no avanzó a la segunda foto");
+await evaluate("window.__songPreview");
+assert(!(await state()).songExperience.visible, "La cortinilla no se ocultó al terminar la canción");
 
-// Primera ronda: botón real y soplido real con la barra espaciadora.
+// Primera ronda: giro real, vuelta al encuadre general y botón mantenido.
+const overviewBeforeSpin = (await state()).scene.cameraPose;
 await evaluate("document.getElementById('spin-btn').click()");
 const dragDuringAutomaticMove = await evaluate("window.__birthdayTest.dragCamera(80)");
-assert(dragDuringAutomaticMove === false, "El arrastre interrumpió un movimiento automático de cámara");
+assert(dragDuringAutomaticMove === false, "El arrastre interrumpió el movimiento automático de cámara");
 const firstId = await waitFor(async () => (await state()).activeCandleId, "La ruleta no eligió una vela");
 const afterFirstSpin = await state();
 assert(afterFirstSpin.scene.maxCameraFocus > 0.9, "La cámara no se acercó durante la ruleta");
-assert(afterFirstSpin.scene.seatedPersonId === firstId, "La cámara no terminó en el asiento de la persona elegida");
-const firstSetting = afterFirstSpin.scene.placeSettings.find((setting) => setting.id === firstId);
-const expectedSeatAzimuth = Math.atan2(firstSetting.chairPosition.x, firstSetting.chairPosition.z);
-assert(
-  Math.abs(afterFirstSpin.scene.cameraPose.azimuth - expectedSeatAzimuth) < 0.02,
-  "La cámara terminó en un asiento incorrecto"
-);
-await new Promise((resolve) => setTimeout(resolve, 100));
-const seatScreenshot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-await writeFile(seatScreenshotPath, Buffer.from(seatScreenshot.data, "base64"));
-assert(await evaluate("window.__birthdayTest.dragCamera(-35)"), "La cámara no volvió a responder tras llegar al asiento");
+const zoomRatio = afterFirstSpin.scene.minimumCameraRadius / overviewBeforeSpin.radius;
+assert(zoomRatio >= 0.82 && zoomRatio <= 0.87, `El zoom no fue moderado: ${zoomRatio.toFixed(2)}`);
+assert(closeEnough(afterFirstSpin.scene.cameraPose.radius, afterFirstSpin.scene.overviewPose.radius), "La cámara no volvió a la distancia general");
+assert(closeEnough(afterFirstSpin.scene.cameraPose.height, afterFirstSpin.scene.overviewPose.height), "La cámara no volvió a la altura general");
+assert(closeEnough(afterFirstSpin.scene.cameraPose.azimuth, overviewBeforeSpin.azimuth), "La ruleta perdió el ángulo elegido por el usuario");
+const spinScreenshot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+await writeFile(spinScreenshotPath, Buffer.from(spinScreenshot.data, "base64"));
+assert(await evaluate("window.__birthdayTest.dragCamera(-35)"), "La cámara no volvió a responder tras el giro");
 const blockedByActiveRound = await evaluate("window.__birthdayTest.spin()");
 assert(blockedByActiveRound === null, "La ruleta permitió saltarse una vela activa");
 
 await send("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
-await new Promise((resolve) => setTimeout(resolve, 50));
-const duringFirstSong = await state();
-assert(duringFirstSong.people[firstId].blown, "La barra espaciadora no apagó la vela");
-assert(duringFirstSong.songPlaying, "La ronda no quedó bloqueada durante la canción o aviso");
-const blockedDuringFirstSong = await evaluate("window.__birthdayTest.spin()");
-assert(blockedDuringFirstSong === null, "La ruleta giró durante una canción");
+await new Promise((resolve) => setTimeout(resolve, 150));
 await send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+assert(!(await state()).people[firstId].blown, "La barra espaciadora sigue apagando la vela");
+
+const blowPoint = await evaluate(`(() => {
+  const rect = document.getElementById("blow-btn").getBoundingClientRect();
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+})()`);
+await send("Input.dispatchMouseEvent", { type: "mousePressed", x: blowPoint.x, y: blowPoint.y, button: "left", buttons: 1, clickCount: 1 });
+await new Promise((resolve) => setTimeout(resolve, 60));
+await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: blowPoint.x, y: blowPoint.y, button: "left", buttons: 0, clickCount: 1 });
+await new Promise((resolve) => setTimeout(resolve, 100));
+const shortHoldState = await state();
+assert(!shortHoldState.people[firstId].blown, "Una pulsación corta simuló el soplido");
+assert(!shortHoldState.microphone.holding && shortHoldState.microphone.state === "closed", "El micrófono no se cerró al soltar");
+assert(shortHoldState.microphone.threshold >= 0.45 && shortHoldState.microphone.threshold <= 0.55, "El umbral no está cerca de la mitad del máximo");
+assert(shortHoldState.microphone.fallbackHoldMs === 120, "El modo alternativo de prueba no expone su retardo");
+
+await send("Input.dispatchMouseEvent", { type: "mousePressed", x: blowPoint.x, y: blowPoint.y, button: "left", buttons: 1, clickCount: 1 });
+await waitFor(async () => (await state()).people[firstId].blown, "Mantener pulsado el botón no apagó la vela");
+await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: blowPoint.x, y: blowPoint.y, button: "left", buttons: 0, clickCount: 1 });
+assert(!(await state()).microphone.holding, "El botón quedó pulsado después de soltar");
 await waitFor(async () => !(await state()).songPlaying, "El aviso de canción ausente dejó la fiesta bloqueada");
 
 const chosenIds = [firstId];
@@ -268,7 +364,7 @@ for (const personId of chosenIds) {
     const biteState = await state();
     assert(result.bites === bite, `El mordisco ${bite} no actualizó la porción`);
     assert(biteState.people[personId].bites === bite, "El estado y la geometría de mordiscos no coinciden");
-    assert(biteState.nomSoundCount === nomBefore + bite, "Falta un sonido ñam por mordisco");
+    assert(biteState.nomSoundCount === nomBefore + bite, "Falta un único sonido ñam por mordisco");
     if (bite < 4) {
       assert(!biteState.people[personId].eaten, "La porción desapareció antes del cuarto mordisco");
       assert(!biteState.modalOpen, "El cómic se abrió antes de terminar la porción");
@@ -284,7 +380,7 @@ const finalState = await state();
 assert(Object.values(finalState.people).every((person) => person.eaten), "No se completaron las cuatro porciones");
 assert(finalState.nomSoundCount === 16, "El total de sonidos ñam no coincide con los mordiscos");
 
-// Comprobación responsive tras recargar en tamaño móvil.
+// Comprobación responsive, órbita táctil y fallback de pulsación mantenida.
 await send("Emulation.setDeviceMetricsOverride", {
   width: 390,
   height: 844,
@@ -309,41 +405,47 @@ const mobileUi = await evaluate(`(() => {
 assert(!mobileUi.overflow, "La interfaz móvil tiene scroll horizontal");
 assert(Math.round(mobileUi.dock.bottom) === mobileUi.viewport.height, "La barra móvil no está anclada abajo");
 assert(mobileUi.spin.left >= 0 && mobileUi.spin.right <= mobileUi.viewport.width, "La ruleta queda fuera de la pantalla móvil");
+await new Promise((resolve) => setTimeout(resolve, 180));
 const mobileScreenshot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
 await writeFile(mobileScreenshotPath, Buffer.from(mobileScreenshot.data, "base64"));
 
 const mobileAzimuthBefore = (await state()).scene.cameraPose.azimuth;
 await send("Input.dispatchTouchEvent", {
   type: "touchStart",
-  touchPoints: [{ x: 24, y: 410, radiusX: 2, radiusY: 2, force: 1, id: 9 }],
+  touchPoints: [{ x: 125, y: 185, radiusX: 2, radiusY: 2, force: 1, id: 9 }],
 });
 await send("Input.dispatchTouchEvent", {
   type: "touchMove",
-  touchPoints: [{ x: 132, y: 410, radiusX: 2, radiusY: 2, force: 1, id: 9 }],
+  touchPoints: [{ x: 245, y: 185, radiusX: 2, radiusY: 2, force: 1, id: 9 }],
 });
 await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 await new Promise((resolve) => setTimeout(resolve, 60));
 const mobileAzimuthAfter = (await state()).scene.cameraPose.azimuth;
 assert(Math.abs(mobileAzimuthAfter - mobileAzimuthBefore) > 0.25, "El arrastre táctil no hizo orbitar la cámara");
 
-// Alternativa táctil: giro y pulsación mantenida sobre el botón de soplar.
 await evaluate("document.getElementById('spin-btn').click()");
 await waitFor(async () => (await state()).activeCandleId, "La ruleta móvil no eligió una vela");
-const blowPoint = await evaluate(`(() => {
+const mobileBlowPoint = await evaluate(`(() => {
   const rect = document.getElementById("blow-btn").getBoundingClientRect();
   return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
 })()`);
 await send("Input.dispatchTouchEvent", {
   type: "touchStart",
-  touchPoints: [{ x: blowPoint.x, y: blowPoint.y, radiusX: 2, radiusY: 2, force: 1, id: 1 }],
+  touchPoints: [{ x: mobileBlowPoint.x, y: mobileBlowPoint.y, radiusX: 2, radiusY: 2, force: 1, id: 1 }],
 });
-await new Promise((resolve) => setTimeout(resolve, 55));
-const touchState = await state();
+await new Promise((resolve) => setTimeout(resolve, 60));
 await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-assert(Object.values(touchState.people).some((person) => person.blown), "La pulsación táctil no apagó la vela");
+await new Promise((resolve) => setTimeout(resolve, 90));
+assert(!Object.values((await state()).people).some((person) => person.blown), "Un toque móvil corto apagó la vela");
+await send("Input.dispatchTouchEvent", {
+  type: "touchStart",
+  touchPoints: [{ x: mobileBlowPoint.x, y: mobileBlowPoint.y, radiusX: 2, radiusY: 2, force: 1, id: 2 }],
+});
+await waitFor(async () => Object.values((await state()).people).some((person) => person.blown), "La pulsación táctil mantenida no apagó la vela");
+await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 await waitFor(async () => !(await state()).songPlaying, "El aviso móvil dejó la fiesta bloqueada");
 
-// La ruta normal conserva una ruleta realmente lenta; ?test solo acelera el resto del recorrido.
+// La ruta normal conserva una ruleta lenta y vuelve a la vista general antes de elegir.
 await send("Emulation.setDeviceMetricsOverride", {
   width: 1280,
   height: 800,
@@ -370,8 +472,8 @@ await waitFor(
   13000
 );
 const productionSpinElapsed = await evaluate("performance.now() - window.__productionSpinStarted");
-assert(productionSpinElapsed >= 7400, `La ruleta de producción duró solo ${Math.round(productionSpinElapsed)} ms`);
-assert(productionSpinElapsed < 11000, "La ruleta de producción tardó demasiado en llegar al asiento");
+assert(productionSpinElapsed >= 8200, `La ruleta de producción y su vuelta duraron solo ${Math.round(productionSpinElapsed)} ms`);
+assert(productionSpinElapsed < 11000, "La ruleta de producción tardó demasiado en volver a la vista general");
 
 await send("Page.navigate", { url: geidoPageUrl });
 await waitFor(
@@ -409,12 +511,13 @@ console.log(JSON.stringify({
   bites: finalState.nomSoundCount,
   comicsOpened: chosenIds.length,
   desktopScreenshot: screenshotPath,
-  seatScreenshot: seatScreenshotPath,
+  spinScreenshot: spinScreenshotPath,
   mobileScreenshot: mobileScreenshotPath,
   mobileViewport: mobileUi.viewport,
   browserErrors: errors,
-  karaokeLines: seenLyrics,
+  crawlSamples: crawlSamples.length,
   walkers: sceneState.walkers.length,
+  npcTested: npcTarget.id,
   productionSpinMs: Math.round(productionSpinElapsed),
   detailPages: [geidoPage.name, carlosPage.name],
 }, null, 2));

@@ -33,14 +33,22 @@
     <div class="scene-ui">
       <span class="round-label">Ruleta de cumpleaños</span>
       <p class="cake-status" id="cake-status" aria-live="polite">Gira la tarta o arrastra la sala para mirar alrededor.</p>
-      <button type="button" id="blow-btn" class="blow-btn" hidden>🎤 Mantén pulsado para soplar</button>
-      <p class="cake-hint" id="cake-hint" hidden>Sopla al micrófono, mantén pulsado espacio o usa este botón.</p>
+      <button type="button" id="blow-btn" class="blow-btn" hidden>🎤 Mantén pulsado para abrir el micro</button>
+      <p class="cake-hint" id="cake-hint" hidden>El micrófono solo permanece abierto mientras mantienes pulsado.</p>
     </div>
-    <div class="karaoke hidden" id="karaoke" aria-live="polite" aria-atomic="true">
-      <span class="karaoke-person" id="karaoke-person"></span>
-      <p class="karaoke-line" id="karaoke-line"></p>
-      <span class="karaoke-progress" aria-hidden="true"><span id="karaoke-progress"></span></span>
+    <div class="song-experience hidden" id="song-experience" aria-live="polite">
+      <figure class="song-photo hidden" id="song-photo-wrap">
+        <img id="song-photo" alt="">
+      </figure>
+      <div class="lyrics-viewport" id="lyrics-viewport">
+        <div class="lyrics-crawl" id="lyrics-crawl">
+          <span class="lyrics-person" id="lyrics-person"></span>
+          <h2 id="lyrics-title"></h2>
+          <div class="lyrics-copy" id="lyrics-copy"></div>
+        </div>
+      </div>
     </div>
+    <div class="npc-dialog-layer" id="npc-dialog-layer" aria-live="polite"></div>
     <div class="scene-fallback" id="scene-fallback" hidden>
       <strong>No hemos podido encender la escena 3D.</strong>
       <span>Comprueba tu conexión y vuelve a cargar la página.</span>

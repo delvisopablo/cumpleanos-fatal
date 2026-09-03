@@ -194,61 +194,126 @@ a:focus-visible {
   filter: brightness(1.12);
 }
 
-.karaoke {
+.song-experience {
   position: absolute;
   z-index: 8;
-  left: 50%;
-  bottom: calc(var(--dock-height) + 8.3rem);
-  width: min(88vw, 760px);
-  transform: translateX(-50%);
-  padding: 0.9rem 1.25rem 0.75rem;
-  border: 1px solid rgba(255, 222, 135, 0.52);
-  border-radius: 18px;
-  color: #fff;
-  text-align: center;
-  background: linear-gradient(180deg, rgba(33, 13, 60, 0.9), rgba(17, 7, 34, 0.94));
-  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.44), 0 0 28px rgba(255, 199, 84, 0.15);
-  backdrop-filter: blur(14px);
+  inset: 18% 0 calc(var(--dock-height) + 7.5rem);
+  overflow: hidden;
+  color: #ffe47f;
   pointer-events: none;
 }
 
-.karaoke.hidden { display: none; }
+.song-experience.hidden,
+.song-photo.hidden { display: none; }
 
-.karaoke-person {
+.lyrics-viewport {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: min(62vw, 720px);
+  overflow: hidden;
+  transform: translateX(-50%);
+  mask-image: linear-gradient(transparent 0%, #000 14%, #000 82%, transparent 100%);
+  perspective: 520px;
+}
+
+.lyrics-crawl {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding: 1rem 2rem 5rem;
+  text-align: center;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+
+.lyrics-person {
   display: block;
-  margin-bottom: 0.2rem;
-  color: #ffe19a;
+  margin-bottom: 0.28rem;
+  color: rgba(255, 255, 255, 0.78);
   font-size: 0.68rem;
   font-weight: 900;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.15em;
   text-transform: uppercase;
 }
 
-.karaoke-line {
-  min-height: 1.25em;
-  margin: 0;
-  font-size: clamp(1.15rem, 3vw, 1.85rem);
-  font-weight: 900;
-  line-height: 1.18;
+.lyrics-crawl h2 {
+  margin: 0 0 1.25rem;
+  color: #fff2ae;
+  font-size: clamp(1.55rem, 4vw, 2.8rem);
+  line-height: 1;
+  text-shadow: 0 4px 22px rgba(0, 0, 0, 0.75);
+}
+
+.lyrics-copy p {
+  margin: 0 0 0.75rem;
+  font-size: clamp(1rem, 2.4vw, 1.5rem);
+  font-weight: 800;
+  line-height: 1.4;
   text-wrap: balance;
-  text-shadow: 0 3px 12px rgba(0, 0, 0, 0.55);
+  text-shadow: 0 3px 14px rgba(0, 0, 0, 0.82);
 }
 
-.karaoke-progress {
-  display: block;
-  height: 3px;
-  margin-top: 0.7rem;
+.song-photo {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: clamp(1rem, 4vw, 4.5rem);
+  width: clamp(110px, 17vw, 225px);
+  aspect-ratio: 4 / 5;
+  margin: 0;
   overflow: hidden;
-  border-radius: 99px;
-  background: rgba(255, 255, 255, 0.17);
+  border: 5px solid rgba(255, 248, 222, 0.94);
+  border-radius: 16px;
+  background: #2b173e;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.5);
+  transform: translateY(-50%) rotate(2deg);
 }
 
-.karaoke-progress > span {
-  display: block;
-  width: 0;
+.song-photo img {
+  width: 100%;
   height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #ff75a0, #ffd76f);
+  object-fit: cover;
+  opacity: 1;
+  transition: opacity 0.45s ease;
+}
+
+.song-photo img.is-changing { opacity: 0; }
+
+.npc-dialog-layer {
+  position: absolute;
+  z-index: 7;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.npc-dialog {
+  position: absolute;
+  width: max-content;
+  max-width: min(190px, 44vw);
+  padding: 0.48rem 0.68rem;
+  border: 2px solid #fff4c6;
+  border-radius: 13px 13px 13px 4px;
+  color: #261433;
+  text-align: center;
+  background: rgba(255, 250, 231, 0.97);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 0.74rem;
+  font-weight: 850;
+  line-height: 1.2;
+  transform: translate(-50%, calc(-100% - 10px));
+}
+
+.npc-dialog strong {
+  display: block;
+  margin-bottom: 0.14rem;
+  color: #a12b62;
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .scene-fallback {
@@ -640,13 +705,22 @@ a:focus-visible {
     padding: 0.6rem 0.75rem;
   }
 
-  .karaoke {
-    bottom: calc(var(--dock-height) + 7.4rem);
-    width: min(92vw, 560px);
-    padding: 0.72rem 0.8rem 0.6rem;
-  }
+  .song-experience { inset: 22% 0 calc(var(--dock-height) + 7.1rem); }
 
-  .karaoke-line { font-size: clamp(1rem, 5.4vw, 1.35rem); }
+  .lyrics-viewport { width: 82vw; }
+
+  .lyrics-crawl { padding-inline: 1rem; }
+
+  .lyrics-crawl h2 { font-size: clamp(1.35rem, 7vw, 2rem); }
+
+  .lyrics-copy p { font-size: clamp(0.9rem, 4.6vw, 1.16rem); }
+
+  .song-photo {
+    top: 0.4rem;
+    right: 0.6rem;
+    width: 92px;
+    transform: rotate(2deg);
+  }
 
   .party-dock { padding-top: 0.55rem; }
 

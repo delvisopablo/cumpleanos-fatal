@@ -15,15 +15,15 @@
 
   const ANGLE_OFFSET = -45;
   const TABLE_SURFACE_Y = 1.62;
-  const CAKE_RADIUS = 3.05;
+  const CAKE_WIDTH = 6.4;
+  const CAKE_DEPTH = 5.2;
   const CAKE_HEIGHT = 1.16;
-  const CANDLE_RADIUS = CAKE_RADIUS * 0.58;
   const CANDLE_HEIGHT = 1.28;
   const BITE_STEPS = 4;
   const PRODUCTION_SPIN_DURATION_MS = 7600;
   const SPIN_DURATION_MS = TEST_MODE ? 420 : REDUCED_MOTION ? 1500 : PRODUCTION_SPIN_DURATION_MS;
   const CAMERA_IN_MS = TEST_MODE ? 70 : REDUCED_MOTION ? 220 : 900;
-  const CAMERA_SEAT_MS = TEST_MODE ? 90 : REDUCED_MOTION ? 260 : 1250;
+  const CAMERA_RETURN_MS = TEST_MODE ? 90 : REDUCED_MOTION ? 240 : 850;
   const BLOW_DURATION_MS = TEST_MODE ? 40 : 680;
   const BITE_DURATION_MS = TEST_MODE ? 45 : 460;
   const TAU = Math.PI * 2;
@@ -51,10 +51,6 @@
 
   function rouletteEase(t) {
     return 1 - Math.pow(1 - t, 4.4);
-  }
-
-  function shortestAngleDelta(from, to) {
-    return ((to - from + Math.PI) % TAU + TAU) % TAU - Math.PI;
   }
 
   function setShadow(mesh, cast, receive) {
@@ -154,16 +150,12 @@
     return sprite;
   }
 
-  function buildWedgeShape(radius, startDeg, endDeg) {
+  function buildTriangleShape(points) {
     const shape = new THREE.Shape();
-    const segments = Math.max(6, Math.ceil((endDeg - startDeg) / 3));
-    shape.moveTo(0, 0);
-    for (let i = 0; i <= segments; i++) {
-      const angle = startDeg + (endDeg - startDeg) * (i / segments);
-      const point = pointOnCircle(radius, angle);
-      shape.lineTo(point.x, -point.z);
-    }
-    shape.lineTo(0, 0);
+    shape.moveTo(points[0].x, -points[0].z);
+    shape.lineTo(points[1].x, -points[1].z);
+    shape.lineTo(points[2].x, -points[2].z);
+    shape.closePath();
     return shape;
   }
 
@@ -486,13 +478,24 @@
       { skin: 0x8f573c, clothes: 0xf06b49, accent: 0xffcf56, skirt: true },
       { skin: 0xc9825b, clothes: 0x3fa58b, accent: 0xff7daf, accessory: "cap" },
       { skin: 0xf2c5a4, clothes: 0x945ee8, accent: 0xffcf56, skirt: true, accessory: "hat" },
+      { skin: 0x6f432f, clothes: 0x348bd1, accent: 0xffcf56, beard: true, accessory: "hat" },
+      { skin: 0xe0a47c, clothes: 0xdc4779, accent: 0x73e0bd, skirt: true, accessory: "cap" },
+      { skin: 0xa96346, clothes: 0x89bd45, accent: 0xe96b4c, beard: true },
+      { skin: 0xf1c8aa, clothes: 0xf0a43c, accent: 0x6f7bea, skirt: true, accessory: "hat" },
+      { skin: 0x80503a, clothes: 0x9b68d7, accent: 0xffdf76, accessory: "cap" },
+      { skin: 0xd28e68, clothes: 0x36a69a, accent: 0xff719d, skirt: true },
+      { skin: 0xf3d0b4, clothes: 0xbd4e68, accent: 0x55b9f1, beard: true, accessory: "cap" },
+      { skin: 0x9d6145, clothes: 0xe4b63f, accent: 0x8f65dd, skirt: true, accessory: "hat" },
     ];
 
     return styles.map((style, index) => {
       const mesh = createWalker({ ...style, scale: 0.88 + (index % 3) * 0.045 });
+      const id = `npc-${String(index + 1).padStart(2, "0")}`;
+      mesh.userData.npcId = id;
       scene.add(mesh);
       return {
-        id: `guest-${index + 1}`,
+        id,
+        name: `Invitado ${index + 1}`,
         mesh,
         phase: (index / styles.length) * TAU + (index % 2 ? 0.18 : 0),
         speed: 0.075 + (index % 4) * 0.009,
@@ -501,21 +504,32 @@
         direction: index % 3 === 0 ? -1 : 1,
         kind: style.skirt ? "girl" : "guest",
         accessory: style.accessory || (style.beard ? "beard" : "none"),
+        phrases: [],
+        paused: false,
+        dialogElement: null,
+        dialogTimer: null,
       };
     });
   }
 
-  function updateWalker(walker, time) {
+  function updateWalker(walker, time, camera) {
     const angle = walker.phase + time * walker.speed * walker.direction;
     const nextAngle = angle + 0.012 * walker.direction;
     const x = Math.cos(angle) * walker.radiusX;
     const z = Math.sin(angle) * walker.radiusZ;
     const nextX = Math.cos(nextAngle) * walker.radiusX;
     const nextZ = Math.sin(nextAngle) * walker.radiusZ;
-    walker.mesh.position.set(x, 0, z);
-    walker.mesh.rotation.y = Math.atan2(nextX - x, nextZ - z);
+    if (!walker.paused) {
+      walker.mesh.position.set(x, 0, z);
+      walker.mesh.rotation.y = Math.atan2(nextX - x, nextZ - z);
+    } else {
+      walker.mesh.rotation.y = Math.atan2(
+        camera.position.x - walker.mesh.position.x,
+        camera.position.z - walker.mesh.position.z
+      );
+    }
 
-    const stride = Math.sin(time * 5.2 + walker.phase * 2);
+    const stride = walker.paused ? 0 : Math.sin(time * 5.2 + walker.phase * 2);
     walker.mesh.userData.limbs.forEach((limb) => {
       limb.arm.rotation.x = stride * 0.52 * limb.side;
       limb.leg.rotation.x = -stride * 0.58 * limb.side;
@@ -536,7 +550,7 @@
 
     const stand = setShadow(
       new THREE.Mesh(
-        new THREE.CylinderGeometry(CAKE_RADIUS + 0.48, CAKE_RADIUS + 0.58, 0.16, 64),
+        new THREE.BoxGeometry(CAKE_WIDTH + 0.72, 0.16, CAKE_DEPTH + 0.72),
         new THREE.MeshStandardMaterial({ color: 0xf4e5ce, metalness: 0.08, roughness: 0.35 })
       ),
       true,
@@ -551,78 +565,140 @@
     const slices = new Map();
     const candles = new Map();
     const clickableMeshes = [];
-    const step = 360 / people.length;
+    const quadrantBounds = [
+      { xMin: -CAKE_WIDTH / 2, xMax: 0, zMin: 0, zMax: CAKE_DEPTH / 2 },
+      { xMin: 0, xMax: CAKE_WIDTH / 2, zMin: 0, zMax: CAKE_DEPTH / 2 },
+      { xMin: 0, xMax: CAKE_WIDTH / 2, zMin: -CAKE_DEPTH / 2, zMax: 0 },
+      { xMin: -CAKE_WIDTH / 2, xMax: 0, zMin: -CAKE_DEPTH / 2, zMax: 0 },
+    ];
+    const whiteIcing = new THREE.MeshStandardMaterial({ color: 0xfff7e8, roughness: 0.68, transparent: true });
+    const chocolate = new THREE.MeshStandardMaterial({ color: 0x8d4b2d, roughness: 0.92, transparent: true });
+    const berryMaterial = new THREE.MeshStandardMaterial({ color: 0xd72e43, roughness: 0.74 });
 
     people.forEach((person, personIndex) => {
-      const start = personIndex * step + ANGLE_OFFSET;
-      const subStep = step / BITE_STEPS;
+      const bounds = quadrantBounds[personIndex];
+      const center = {
+        x: (bounds.xMin + bounds.xMax) / 2,
+        z: (bounds.zMin + bounds.zMax) / 2,
+      };
+      const corners = [
+        { x: bounds.xMin, z: bounds.zMax },
+        { x: bounds.xMax, z: bounds.zMax },
+        { x: bounds.xMax, z: bounds.zMin },
+        { x: bounds.xMin, z: bounds.zMin },
+      ];
+      const inset = 0.12;
+      const panelBounds = {
+        xMin: bounds.xMin + inset,
+        xMax: bounds.xMax - inset,
+        zMin: bounds.zMin + inset,
+        zMax: bounds.zMax - inset,
+      };
+      const panelCenter = {
+        x: (panelBounds.xMin + panelBounds.xMax) / 2,
+        z: (panelBounds.zMin + panelBounds.zMax) / 2,
+      };
+      const panelCorners = [
+        { x: panelBounds.xMin, z: panelBounds.zMax },
+        { x: panelBounds.xMax, z: panelBounds.zMax },
+        { x: panelBounds.xMax, z: panelBounds.zMin },
+        { x: panelBounds.xMin, z: panelBounds.zMin },
+      ];
       const segments = [];
+      const angleMid = Math.atan2(center.x, center.z) * 180 / Math.PI;
 
       for (let biteIndex = 0; biteIndex < BITE_STEPS; biteIndex++) {
-        const segmentStart = start + biteIndex * subStep;
-        const segmentEnd = segmentStart + subStep;
-        const geometry = new THREE.ExtrudeGeometry(buildWedgeShape(CAKE_RADIUS, segmentStart, segmentEnd), {
+        const next = (biteIndex + 1) % BITE_STEPS;
+        const bodyPoints = [center, corners[biteIndex], corners[next]];
+        const geometry = new THREE.ExtrudeGeometry(buildTriangleShape(bodyPoints), {
           depth: CAKE_HEIGHT,
           bevelEnabled: false,
           curveSegments: 1,
         });
-        const capMaterial = new THREE.MeshStandardMaterial({
-          color: new THREE.Color(person.color),
-          roughness: 0.55,
-          transparent: true,
-        });
-        const sideMaterial = new THREE.MeshStandardMaterial({
-          color: 0xd69a55,
-          roughness: 0.9,
-          transparent: true,
-        });
+        const capMaterial = whiteIcing.clone();
+        const sideMaterial = chocolate.clone();
         const mesh = setShadow(new THREE.Mesh(geometry, [capMaterial, sideMaterial]), true, true);
         mesh.rotation.x = -Math.PI / 2;
         mesh.userData = { personId: person.id, biteIndex };
         spinGroup.add(mesh);
         clickableMeshes.push(mesh);
 
-        const mid = segmentStart + subStep / 2;
-        const creamPoint = pointOnCircle(CAKE_RADIUS * 0.965, mid);
-        const cream = setShadow(
-          new THREE.Mesh(
-            new THREE.SphereGeometry(0.13, 12, 9),
-            new THREE.MeshStandardMaterial({ color: 0xfff7e8, roughness: 0.65 })
-          ),
+        const cream = new THREE.Group();
+        const panelPoints = [panelCenter, panelCorners[biteIndex], panelCorners[next]];
+        const panelGeometry = new THREE.ExtrudeGeometry(buildTriangleShape(panelPoints), {
+          depth: 0.075,
+          bevelEnabled: false,
+          curveSegments: 1,
+        });
+        const panel = setShadow(
+          new THREE.Mesh(panelGeometry, new THREE.MeshStandardMaterial({ color: new THREE.Color(person.color), roughness: 0.64 })),
           true,
           true
         );
-        cream.position.set(creamPoint.x, CAKE_HEIGHT + 0.06, creamPoint.z);
+        panel.rotation.x = -Math.PI / 2;
+        panel.position.y = CAKE_HEIGHT + 0.025;
+        cream.add(panel);
+
+        if (biteIndex % 2 === 0) {
+          const berry = setShadow(new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.24, 0.28), berryMaterial), true, true);
+          berry.position.set(
+            (center.x + corners[biteIndex].x + corners[next].x) / 3,
+            CAKE_HEIGHT + 0.19,
+            (center.z + corners[biteIndex].z + corners[next].z) / 3
+          );
+          cream.add(berry);
+        }
+
+        const isOuterEdge = (
+          (biteIndex === 0 && bounds.zMax === CAKE_DEPTH / 2) ||
+          (biteIndex === 1 && bounds.xMax === CAKE_WIDTH / 2) ||
+          (biteIndex === 2 && bounds.zMin === -CAKE_DEPTH / 2) ||
+          (biteIndex === 3 && bounds.xMin === -CAKE_WIDTH / 2)
+        );
+        if (isOuterEdge) {
+          const edgeA = corners[biteIndex];
+          const edgeB = corners[next];
+          [0.34, 0.68].forEach((fraction, dripIndex) => {
+            const drip = setShadow(
+              new THREE.Mesh(
+                new THREE.BoxGeometry(biteIndex % 2 === 0 ? 0.28 : 0.09, 0.3 + dripIndex * 0.12, biteIndex % 2 === 0 ? 0.09 : 0.28),
+                whiteIcing
+              ),
+              true,
+              true
+            );
+            drip.position.set(
+              edgeA.x + (edgeB.x - edgeA.x) * fraction,
+              CAKE_HEIGHT - 0.1 - dripIndex * 0.06,
+              edgeA.z + (edgeB.z - edgeA.z) * fraction
+            );
+            cream.add(drip);
+          });
+        }
+
         spinGroup.add(cream);
-        segments.push({ mesh, capMaterial, sideMaterial, cream, mid });
+        segments.push({ mesh, capMaterial, sideMaterial, cream, mid: angleMid });
       }
 
       slices.set(person.id, {
         id: person.id,
         personIndex,
-        angleMid: start + step / 2,
+        angleMid,
         segments,
-        biteOrder: [0, 3, 1, 2],
+        biteOrder: [0, 2, 1, 3],
         bites: 0,
         biting: false,
         removed: false,
       });
     });
 
-    const centerIcing = setShadow(
-      new THREE.Mesh(
-        new THREE.CylinderGeometry(0.36, 0.42, CAKE_HEIGHT + 0.1, 32),
-        new THREE.MeshStandardMaterial({ color: 0xfff4dc, roughness: 0.58 })
-      ),
-      true,
-      true
-    );
-    centerIcing.position.y = CAKE_HEIGHT / 2;
-    spinGroup.add(centerIcing);
-
     people.forEach((person, index) => {
-      const mid = index * step + step / 2 + ANGLE_OFFSET;
-      const position = pointOnCircle(CANDLE_RADIUS, mid);
+      const bounds = quadrantBounds[index];
+      const position = {
+        x: (bounds.xMin + bounds.xMax) / 2,
+        z: (bounds.zMin + bounds.zMax) / 2,
+      };
+      const mid = Math.atan2(position.x, position.z) * 180 / Math.PI;
       const group = new THREE.Group();
       group.position.set(position.x, CAKE_HEIGHT, position.z);
       spinGroup.add(group);
@@ -707,10 +783,26 @@
       });
     });
 
-    return { cakeRoot, spinGroup, slices, candles, clickableMeshes };
+    return {
+      cakeRoot,
+      spinGroup,
+      slices,
+      candles,
+      clickableMeshes,
+      profile: {
+        style: "minecraft-block",
+        shape: "rectangular-prism",
+        width: CAKE_WIDTH,
+        depth: CAKE_DEPTH,
+        height: CAKE_HEIGHT,
+        quadrantCount: people.length,
+        biteSegmentsPerQuadrant: BITE_STEPS,
+        redCubeCount: people.length * 2,
+      },
+    };
   }
 
-  function createCake3D({ canvas, people }) {
+  function createCake3D({ canvas, people, dialogLayer }) {
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(global.devicePixelRatio || 1, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -760,7 +852,7 @@
     });
 
     const cake = createCakeGeometry(scene, people, createGlowTexture());
-    const { cakeRoot, spinGroup, slices, candles, clickableMeshes } = cake;
+    const { cakeRoot, spinGroup, slices, candles, clickableMeshes, profile: cakeProfile } = cake;
 
     const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 120);
     const cameraTarget = new THREE.Vector3();
@@ -768,8 +860,8 @@
     const cameraPose = { ...overviewPose };
     let cameraFocus = 0;
     let maxCameraFocus = 0;
+    let minimumCameraRadius = cameraPose.radius;
     let cameraAuto = false;
-    let seatedPersonId = null;
 
     let spinning = false;
     let armedId = null;
@@ -781,6 +873,89 @@
     const activeTweens = [];
     const sliceClickListeners = [];
     const clock = new THREE.Clock();
+    let activeNpc = null;
+
+    function setNpcData(data) {
+      const entries = Array.isArray(data && data.npcs) ? data.npcs : [];
+      const byId = new Map(entries.map((entry) => [entry.id, entry]));
+      walkers.forEach((walker) => {
+        const entry = byId.get(walker.id);
+        if (!entry) return;
+        walker.name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : walker.name;
+        walker.phrases = Array.isArray(entry.phrases)
+          ? entry.phrases.filter((phrase) => typeof phrase === "string" && phrase.trim()).map((phrase) => phrase.trim())
+          : [];
+      });
+    }
+
+    function hideNpcDialog(walker) {
+      if (!walker) return;
+      if (walker.dialogTimer) global.clearTimeout(walker.dialogTimer);
+      walker.dialogTimer = null;
+      if (walker.dialogElement) walker.dialogElement.remove();
+      walker.dialogElement = null;
+      if (walker.paused && Number.isFinite(walker.pauseStartedAt)) {
+        walker.phase -= (elapsed - walker.pauseStartedAt) * walker.speed * walker.direction;
+      }
+      walker.pauseStartedAt = null;
+      walker.paused = false;
+      if (activeNpc === walker) activeNpc = null;
+    }
+
+    function talkToNpc(id) {
+      const walker = walkers.find((candidate) => candidate.id === id);
+      if (!walker) return { found: false, speaking: false };
+      if (walker.paused) {
+        hideNpcDialog(walker);
+        return { found: true, speaking: false, id: walker.id };
+      }
+
+      if (activeNpc) hideNpcDialog(activeNpc);
+      walker.paused = true;
+      walker.pauseStartedAt = elapsed;
+      activeNpc = walker;
+      const choices = walker.phrases.length > 0 ? walker.phrases : ["¡Feliz cumpleaños!"];
+      const phrase = choices[Math.floor(Math.random() * choices.length)];
+
+      if (dialogLayer) {
+        const bubble = document.createElement("div");
+        bubble.className = "npc-dialog";
+        const name = document.createElement("strong");
+        name.textContent = walker.name;
+        const text = document.createElement("span");
+        text.textContent = phrase;
+        bubble.append(name, text);
+        dialogLayer.appendChild(bubble);
+        walker.dialogElement = bubble;
+      }
+
+      walker.dialogTimer = global.setTimeout(
+        () => hideNpcDialog(walker),
+        TEST_MODE ? 650 : 4300
+      );
+      return { found: true, speaking: true, id: walker.id, name: walker.name, phrase };
+    }
+
+    function npcScreenPosition(walker, localY = 2.05) {
+      const world = new THREE.Vector3(0, localY, 0);
+      walker.mesh.localToWorld(world);
+      world.project(camera);
+      return {
+        x: (world.x * 0.5 + 0.5) * canvas.clientWidth,
+        y: (-world.y * 0.5 + 0.5) * canvas.clientHeight,
+        visible: world.z > -1 && world.z < 1 && world.x > -1 && world.x < 1 && world.y > -1 && world.y < 1,
+      };
+    }
+
+    function updateNpcDialogs() {
+      walkers.forEach((walker) => {
+        if (!walker.dialogElement) return;
+        const screen = npcScreenPosition(walker, 3.35);
+        walker.dialogElement.hidden = !screen.visible;
+        walker.dialogElement.style.left = `${screen.x}px`;
+        walker.dialogElement.style.top = `${screen.y}px`;
+      });
+    }
 
     function updateCamera() {
       camera.position.set(
@@ -802,11 +977,11 @@
       camera.updateProjectionMatrix();
 
       const nextOverview = aspect < 0.78
-        ? { radius: Math.hypot(13.8, 15.2), height: 10.8, azimuth: Math.atan2(13.8, 15.2) }
+        ? { radius: Math.hypot(18.5, 20.5), height: 13.6, azimuth: Math.atan2(18.5, 20.5) }
         : { radius: Math.hypot(11.1, 12.4), height: 8.15, azimuth: Math.atan2(11.1, 12.4) };
       overviewPose.radius = nextOverview.radius;
       overviewPose.height = nextOverview.height;
-      if (!seatedPersonId && !cameraAuto && !spinning) {
+      if (!cameraAuto && !spinning) {
         cameraPose.radius = overviewPose.radius;
         cameraPose.height = overviewPose.height;
         if (!Number.isFinite(cameraPose.azimuth)) cameraPose.azimuth = nextOverview.azimuth;
@@ -870,7 +1045,7 @@
         cakeRoot.rotation.z = 0.016 * Math.cos(elapsed * 0.61);
       }
 
-      walkers.forEach((walker) => updateWalker(walker, elapsed));
+      walkers.forEach((walker) => updateWalker(walker, elapsed, camera));
 
       candles.forEach((candle, id) => {
         if (!candle.blownOut) {
@@ -917,6 +1092,7 @@
       }
 
       updateCamera();
+      updateNpcDialogs();
       renderer.render(scene, camera);
       global.requestAnimationFrame(animate);
     }
@@ -931,25 +1107,29 @@
       spinning = true;
       cameraAuto = true;
       armedId = null;
-      seatedPersonId = null;
       maxCameraFocus = 0;
       const target = candidates[Math.floor(Math.random() * candidates.length)];
       const candle = candles.get(target.id);
-      const setting = placeSettings.find((item) => item.id === target.id);
       const localAngle = degToRad(candle.angleMid);
-      const seatAzimuth = Math.atan2(setting.chairPosition.x, setting.chairPosition.z);
-      const desiredRotation = seatAzimuth - localAngle;
+      const desiredRotation = cameraPose.azimuth - localAngle;
       const currentRotation = spinGroup.rotation.y;
       const delta = ((desiredRotation - currentRotation) % TAU + TAU) % TAU;
       const extraTurns = TEST_MODE ? 2 : 8 + Math.floor(Math.random() * 3);
       const finalRotation = currentRotation + delta + extraTurns * TAU;
 
       const startPose = { ...cameraPose };
-      const closePose = {
-        radius: Math.max(5.8, startPose.radius * 0.62),
-        height: Math.max(4.7, startPose.height * 0.72),
+      minimumCameraRadius = startPose.radius;
+      const generalPose = {
+        radius: overviewPose.radius,
+        height: overviewPose.height,
         azimuth: startPose.azimuth,
-        targetY: TABLE_SURFACE_Y + 0.9,
+        targetY: overviewPose.targetY,
+      };
+      const closePose = {
+        radius: startPose.radius * 0.84,
+        height: startPose.height * 0.91,
+        azimuth: startPose.azimuth,
+        targetY: TABLE_SURFACE_Y + 0.78,
       };
       const zoomIn = addTween({
         duration: CAMERA_IN_MS,
@@ -958,6 +1138,7 @@
           cameraFocus = progress;
           maxCameraFocus = Math.max(maxCameraFocus, cameraFocus);
           cameraPose.radius = startPose.radius + (closePose.radius - startPose.radius) * progress;
+          minimumCameraRadius = Math.min(minimumCameraRadius, cameraPose.radius);
           cameraPose.height = startPose.height + (closePose.height - startPose.height) * progress;
           cameraPose.targetY = startPose.targetY + (closePose.targetY - startPose.targetY) * progress;
         },
@@ -972,34 +1153,24 @@
       baseRotationY = ((finalRotation % TAU) + TAU) % TAU;
       spinGroup.rotation.y = baseRotationY;
 
-      const seatRadius = Math.hypot(setting.chairPosition.x, setting.chairPosition.z) + 0.88;
-      const seatPose = {
-        radius: seatRadius,
-        height: 3.52,
-        azimuth: seatAzimuth,
-        targetY: TABLE_SURFACE_Y + CAKE_HEIGHT + CANDLE_HEIGHT * 0.55,
-      };
-      const seatStart = { ...cameraPose };
-      const angleDelta = shortestAngleDelta(seatStart.azimuth, seatPose.azimuth);
+      const returnStart = { ...cameraPose };
       await addTween({
-        duration: CAMERA_SEAT_MS,
+        duration: CAMERA_RETURN_MS,
         ease: easeInOutCubic,
         onUpdate: (progress) => {
-          cameraPose.radius = seatStart.radius + (seatPose.radius - seatStart.radius) * progress;
-          cameraPose.height = seatStart.height + (seatPose.height - seatStart.height) * progress;
-          cameraPose.azimuth = seatStart.azimuth + angleDelta * progress;
-          cameraPose.targetY = seatStart.targetY + (seatPose.targetY - seatStart.targetY) * progress;
+          cameraPose.radius = returnStart.radius + (generalPose.radius - returnStart.radius) * progress;
+          cameraPose.height = returnStart.height + (generalPose.height - returnStart.height) * progress;
+          cameraPose.targetY = returnStart.targetY + (generalPose.targetY - returnStart.targetY) * progress;
           cameraFocus = 1 - progress;
         },
         onComplete: () => {
-          Object.assign(cameraPose, seatPose);
+          Object.assign(cameraPose, generalPose);
           cameraFocus = 0;
         },
       });
 
       spinning = false;
       cameraAuto = false;
-      seatedPersonId = target.id;
       armedId = target.id;
       return target.id;
     }
@@ -1114,6 +1285,14 @@
         return;
       }
 
+      const npcHits = raycaster.intersectObjects(walkers.map((walker) => walker.mesh), true);
+      if (npcHits.length > 0) {
+        let object = npcHits[0].object;
+        while (object && !object.userData.npcId) object = object.parent;
+        if (object && object.userData.npcId) talkToNpc(object.userData.npcId);
+        return;
+      }
+
       const cakeHits = raycaster.intersectObject(cakeRoot, true);
       if (cakeHits.length > 0 || spinning || cameraAuto) return;
 
@@ -1166,10 +1345,12 @@
         maxCameraFocus,
         cameraAuto,
         cameraPose: { ...cameraPose },
-        seatedPersonId,
+        overviewPose: { ...overviewPose },
+        minimumCameraRadius,
         manualDragCount,
         productionSpinDurationMs: PRODUCTION_SPIN_DURATION_MS,
         spinDurationMs: SPIN_DURATION_MS,
+        cakeProfile: { ...cakeProfile },
         sliceState,
         placeSettings: placeSettings.map((setting) => ({
           id: setting.id,
@@ -1181,8 +1362,13 @@
         })),
         walkers: walkers.map((walker) => ({
           id: walker.id,
+          name: walker.name,
           kind: walker.kind,
           accessory: walker.accessory,
+          phraseCount: walker.phrases.length,
+          paused: walker.paused,
+          dialogVisible: Boolean(walker.dialogElement),
+          screenPosition: npcScreenPosition(walker),
           position: { x: walker.mesh.position.x, y: walker.mesh.position.y, z: walker.mesh.position.z },
           intersectsFurniture: intersectsFurniture(walker.mesh.position),
         })),
@@ -1196,6 +1382,8 @@
       biteSlice,
       setSlicesInteractive,
       onSliceClick,
+      setNpcData,
+      talkToNpc,
       testDragBy,
       getSnapshot,
       dispose() {
@@ -1206,6 +1394,7 @@
         canvas.removeEventListener("pointermove", handlePointerMove);
         canvas.removeEventListener("pointerup", endPointerDrag);
         canvas.removeEventListener("pointercancel", endPointerDrag);
+        walkers.forEach((walker) => hideNpcDialog(walker));
         renderer.dispose();
       },
     };

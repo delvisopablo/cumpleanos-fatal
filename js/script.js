@@ -7,11 +7,18 @@
 
   const CONFIG = global.CONFIG;
   const TEST_MODE = new URLSearchParams(global.location.search).has("test");
-  const BLOW_SUSTAIN_MS = TEST_MODE ? 30 : 340;
-  const BLOW_RMS_THRESHOLD = 0.14;
+  const BLOW_SUSTAIN_MS = TEST_MODE ? 30 : 130;
+  const FALLBACK_HOLD_MS = TEST_MODE ? 120 : 900;
+  const BLOW_LEVEL_THRESHOLD = 0.48;
   const MISSING_AUDIO_NOTICE_MS = TEST_MODE ? 90 : 1700;
   const AUDIO_LOAD_TIMEOUT_MS = TEST_MODE ? 350 : 5500;
   const BITE_STEPS = global.Cake3D ? global.Cake3D.BITE_STEPS : 4;
+  const PERSON_PAGES = {
+    geido: "personas/geido-senchaz.html",
+    "diego-s2": "personas/diego-sanchez-2.html",
+    carlos: "personas/carlos-conde.html",
+    daviles: "personas/daviles.html",
+  };
 
   const state = {};
   let cake = null;
@@ -21,7 +28,7 @@
   let allBlown = false;
   let currentAudio = null;
   let nomSoundCount = 0;
-  let karaokeRun = null;
+  let songExperienceRun = null;
 
   let modalPerson = null;
   let modalIndex = 0;
@@ -45,6 +52,18 @@
 
   function personById(id) {
     return CONFIG.people.find((person) => person.id === id);
+  }
+
+  async function loadNpcData() {
+    if (global.location.protocol === "file:") return { npcs: [] };
+    try {
+      const response = await fetch("assets/npcs/phrases.json", { cache: "no-store" });
+      if (!response.ok) return { npcs: [] };
+      const data = await response.json();
+      return data && Array.isArray(data.npcs) ? data : { npcs: [] };
+    } catch (error) {
+      return { npcs: [] };
+    }
   }
 
   function showToast(message, duration = 4200) {
@@ -71,7 +90,7 @@
 
       const link = document.createElement("a");
       link.className = "person-link";
-      link.href = person.page;
+      link.href = PERSON_PAGES[person.id] || "index.html";
 
       const dot = document.createElement("span");
       dot.className = "legend-dot";
@@ -147,10 +166,11 @@
     else label.textContent = "Girar la tarta";
   }
 
-  async function loadLyrics(id) {
+  async function loadLyrics(person) {
     if (global.location.protocol === "file:") return [];
+    if (!person || !person.lyrics) return [];
     try {
-      const response = await fetch(`assets/lyrics/${encodeURIComponent(id)}.txt`, { cache: "no-store" });
+      const response = await fetch(person.lyrics, { cache: "no-store" });
       if (!response.ok) return [];
       const text = await response.text();
       return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -159,45 +179,83 @@
     }
   }
 
-  function hideKaraoke(completed = false) {
-    const run = karaokeRun;
-    karaokeRun = null;
+  function hideSongExperience(completed = false) {
+    const run = songExperienceRun;
+    songExperienceRun = null;
     if (run && run.frame) global.cancelAnimationFrame(run.frame);
-    const panel = document.getElementById("karaoke");
+    const panel = document.getElementById("song-experience");
     if (panel) panel.classList.add("hidden");
-    const progress = document.getElementById("karaoke-progress");
-    if (progress) progress.style.width = "0%";
+    const photoWrap = document.getElementById("song-photo-wrap");
+    if (photoWrap) photoWrap.classList.add("hidden");
     if (run && run.resolve) run.resolve(completed);
   }
 
-  function startKaraoke(person, lines, durationSeconds, getCurrentTime) {
-    hideKaraoke(false);
-    if (!Array.isArray(lines) || lines.length === 0 || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+  function startSongExperience(person, lines, durationSeconds, getCurrentTime) {
+    hideSongExperience(false);
+    const photos = Array.isArray(person.songPhotos) ? person.songPhotos.filter(Boolean) : [];
+    const lyricLines = Array.isArray(lines) ? lines : [];
+    if ((lyricLines.length === 0 && photos.length === 0) || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
       return Promise.resolve(false);
     }
 
-    const panel = document.getElementById("karaoke");
-    const personLabel = document.getElementById("karaoke-person");
-    const lineLabel = document.getElementById("karaoke-line");
-    const progressBar = document.getElementById("karaoke-progress");
-    personLabel.textContent = `Cantando con ${person.displayName || person.name}`;
-    lineLabel.textContent = lines[0];
-    progressBar.style.width = "0%";
+    const panel = document.getElementById("song-experience");
+    const viewport = document.getElementById("lyrics-viewport");
+    const crawl = document.getElementById("lyrics-crawl");
+    const personLabel = document.getElementById("lyrics-person");
+    const titleLabel = document.getElementById("lyrics-title");
+    const copy = document.getElementById("lyrics-copy");
+    const photoWrap = document.getElementById("song-photo-wrap");
+    const photo = document.getElementById("song-photo");
+    const title = lyricLines[0] || "";
+    const bodyLines = lyricLines.slice(1);
+
+    personLabel.textContent = `Canción de ${person.name}`;
+    titleLabel.textContent = title;
+    copy.replaceChildren();
+    bodyLines.forEach((line) => {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = line;
+      copy.appendChild(paragraph);
+    });
+    viewport.hidden = lyricLines.length === 0;
+    photoWrap.classList.toggle("hidden", photos.length === 0);
+    photo.alt = photos.length > 0 ? `Recuerdo de ${person.name}` : "";
     panel.classList.remove("hidden");
 
     return new Promise((resolve) => {
-      const run = { frame: null, resolve };
-      karaokeRun = run;
+      const run = { frame: null, resolve, progress: 0, photoIndex: -1 };
+      songExperienceRun = run;
+
+      function showPhoto(index) {
+        if (photos.length === 0 || index === run.photoIndex) return;
+        run.photoIndex = index;
+        photo.classList.add("is-changing");
+        global.setTimeout(() => {
+          if (songExperienceRun !== run) return;
+          photoWrap.classList.remove("hidden");
+          photo.src = photos[index];
+          photo.classList.remove("is-changing");
+        }, TEST_MODE ? 10 : 180);
+      }
+
+      photo.onerror = () => photoWrap.classList.add("hidden");
 
       function update() {
-        if (karaokeRun !== run) return;
+        if (songExperienceRun !== run) return;
         const currentTime = Math.max(0, Number(getCurrentTime()) || 0);
         const ratio = Math.min(1, currentTime / durationSeconds);
-        const lineIndex = Math.min(lines.length - 1, Math.floor(ratio * lines.length));
-        lineLabel.textContent = lines[lineIndex];
-        progressBar.style.width = `${ratio * 100}%`;
+        run.progress = ratio;
+        if (lyricLines.length > 0) {
+          const startY = viewport.clientHeight * 0.94;
+          const endY = -(crawl.scrollHeight + 24);
+          const offset = startY + (endY - startY) * ratio;
+          crawl.style.transform = `translateY(${offset}px) rotateX(9deg)`;
+        }
+        if (photos.length > 0) {
+          showPhoto(Math.min(photos.length - 1, Math.floor(ratio * photos.length)));
+        }
         if (ratio >= 1) {
-          hideKaraoke(true);
+          hideSongExperience(true);
           return;
         }
         run.frame = global.requestAnimationFrame(update);
@@ -207,10 +265,10 @@
     });
   }
 
-  function previewLyricsForTest(lines, durationMs) {
+  function previewSongForTest(lines, durationMs, photos = []) {
     const startedAt = performance.now();
-    return startKaraoke(
-      CONFIG.people[0],
+    return startSongExperience(
+      { ...CONFIG.people[0], songPhotos: photos },
       lines,
       Math.max(1, durationMs) / 1000,
       () => (performance.now() - startedAt) / 1000
@@ -219,13 +277,13 @@
 
   function playSong(id) {
     const person = personById(id);
-    const lyricsPromise = loadLyrics(id);
+    const lyricsPromise = loadLyrics(person);
     return new Promise((resolve) => {
       if (currentAudio) {
         currentAudio.pause();
         currentAudio.removeAttribute("src");
       }
-      hideKaraoke(false);
+      hideSongExperience(false);
 
       const audio = new Audio();
       currentAudio = audio;
@@ -251,14 +309,14 @@
       }
 
       function handleEnded() {
-        hideKaraoke(true);
+        hideSongExperience(true);
         finish({ played: true, missing: false });
       }
 
       async function handleMetadata() {
         const lines = await lyricsPromise;
-        if (finished || currentAudio !== audio || lines.length === 0) return;
-        startKaraoke(person, lines, audio.duration, () => audio.currentTime);
+        if (finished || currentAudio !== audio) return;
+        startSongExperience(person, lines, audio.duration, () => audio.currentTime);
       }
 
       function handleMissing() {
@@ -266,7 +324,7 @@
         missingStarted = true;
         clearTimeout(loadTimer);
         audio.pause();
-        hideKaraoke(false);
+        hideSongExperience(false);
         showToast(`🎵 La canción de ${person.displayName || person.name} aún no está subida. La fiesta continúa.`, MISSING_AUDIO_NOTICE_MS);
         noticeTimer = setTimeout(() => finish({ played: false, missing: true }), MISSING_AUDIO_NOTICE_MS);
       }
@@ -327,107 +385,140 @@
     }
   }
 
-  let micState = "idle";
+  let micState = "closed";
   let micStream = null;
   let micContext = null;
   let micAnalyser = null;
   let micSamples = null;
   let breathAboveSince = null;
+  let fallbackTimer = null;
+  let holdingBlow = false;
+  let micExplanationShown = false;
 
-  async function ensureMic() {
-    if (micState !== "idle") return micState === "active";
-    if (TEST_MODE) {
-      micState = "unavailable";
+  function closeMicrophone() {
+    if (micStream) micStream.getTracks().forEach((track) => track.stop());
+    micStream = null;
+    micAnalyser = null;
+    micSamples = null;
+    if (micContext && micContext.state !== "closed") micContext.close().catch(() => {});
+    micContext = null;
+    micState = "closed";
+  }
+
+  function releaseBlowHold() {
+    holdingBlow = false;
+    breathAboveSince = null;
+    if (fallbackTimer) global.clearTimeout(fallbackTimer);
+    fallbackTimer = null;
+    closeMicrophone();
+    const button = document.getElementById("blow-btn");
+    if (button) button.classList.remove("is-charging");
+  }
+
+  function processMicrophoneLevel(level, now = performance.now()) {
+    if (!holdingBlow || micState !== "active" || !activeCandleId || songPlaying || spinning) {
+      breathAboveSince = null;
+      return false;
+    }
+    if (level >= BLOW_LEVEL_THRESHOLD) {
+      if (breathAboveSince === null) breathAboveSince = now;
+      else if (now - breathAboveSince >= BLOW_SUSTAIN_MS) {
+        breathAboveSince = null;
+        handleBlowSignal("microphone");
+        return true;
+      }
+    } else {
+      breathAboveSince = null;
+    }
+    return false;
+  }
+
+  function micLoop() {
+    if (!holdingBlow || micState !== "active" || !micAnalyser || !micSamples) return;
+    micAnalyser.getByteTimeDomainData(micSamples);
+    let peak = 0;
+    for (let index = 0; index < micSamples.length; index++) {
+      peak = Math.max(peak, Math.abs((micSamples[index] - 128) / 128));
+    }
+    processMicrophoneLevel(peak);
+    if (holdingBlow && micState === "active") global.requestAnimationFrame(micLoop);
+  }
+
+  function startFallbackHold() {
+    micState = "fallback";
+    fallbackTimer = global.setTimeout(() => {
+      fallbackTimer = null;
+      if (holdingBlow) handleBlowSignal("fallback");
+    }, FALLBACK_HOLD_MS);
+  }
+
+  async function openMicrophoneForHold() {
+    if (TEST_MODE || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      startFallbackHold();
       return false;
     }
 
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      micState = "unavailable";
-      showToast("Tu navegador no permite usar el micrófono aquí. Usa espacio o mantén pulsado el botón 🎤.");
-      return false;
+    if (!micExplanationShown) {
+      micExplanationShown = true;
+      showToast("El micrófono se abre solo mientras mantienes pulsado y se usa únicamente para detectar el soplido.");
     }
 
     micState = "requesting";
-    showToast("Usaremos el micrófono solo para detectar el soplido; no se graba ni se guarda nada.");
-
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           autoGainControl: false,
           echoCancellation: false,
           noiseSuppression: false,
         },
       });
+      if (!holdingBlow) {
+        stream.getTracks().forEach((track) => track.stop());
+        micState = "closed";
+        return false;
+      }
       const AudioContextClass = global.AudioContext || global.webkitAudioContext;
+      if (!AudioContextClass) {
+        stream.getTracks().forEach((track) => track.stop());
+        startFallbackHold();
+        return false;
+      }
+      micStream = stream;
       micContext = new AudioContextClass();
       const source = micContext.createMediaStreamSource(micStream);
       micAnalyser = micContext.createAnalyser();
       micAnalyser.fftSize = 512;
-      micAnalyser.smoothingTimeConstant = 0.5;
+      micAnalyser.smoothingTimeConstant = 0.35;
       source.connect(micAnalyser);
-      micSamples = new Uint8Array(micAnalyser.frequencyBinCount);
+      micSamples = new Uint8Array(micAnalyser.fftSize);
       micState = "active";
       global.requestAnimationFrame(micLoop);
       return true;
     } catch (error) {
-      micState = "denied";
-      showToast("Sin permiso de micrófono. Puedes soplar con espacio o manteniendo pulsado el botón 🎤.");
+      if (!holdingBlow) return false;
+      showToast("No se pudo abrir el micrófono. Mantén pulsado un segundo para usar el modo alternativo.");
+      startFallbackHold();
       return false;
     }
   }
 
-  function micLoop() {
-    if (micState !== "active" || !micAnalyser) return;
-    micAnalyser.getByteTimeDomainData(micSamples);
-    let sum = 0;
-    for (let index = 0; index < micSamples.length; index++) {
-      const value = (micSamples[index] - 128) / 128;
-      sum += value * value;
-    }
-    const rms = Math.sqrt(sum / micSamples.length);
-
-    if (activeCandleId && !songPlaying && !spinning) {
-      if (rms > BLOW_RMS_THRESHOLD) {
-        if (breathAboveSince === null) breathAboveSince = performance.now();
-        else if (performance.now() - breathAboveSince >= BLOW_SUSTAIN_MS) {
-          breathAboveSince = null;
-          handleBlowSignal("microphone");
-        }
-      } else {
-        breathAboveSince = null;
-      }
-    } else {
-      breathAboveSince = null;
-    }
-    global.requestAnimationFrame(micLoop);
-  }
-
-  let chargeTimer = null;
-
-  function startCharge() {
-    if (!activeCandleId || state[activeCandleId].blown || spinning || songPlaying || chargeTimer) return false;
+  function startBlowHold() {
+    if (!activeCandleId || state[activeCandleId].blown || spinning || songPlaying || holdingBlow) return false;
+    holdingBlow = true;
     document.getElementById("blow-btn").classList.add("is-charging");
-    chargeTimer = setTimeout(() => {
-      chargeTimer = null;
-      document.getElementById("blow-btn").classList.remove("is-charging");
-      handleBlowSignal("press");
-    }, BLOW_SUSTAIN_MS);
+    openMicrophoneForHold();
     return true;
   }
 
-  function cancelCharge() {
-    if (chargeTimer) clearTimeout(chargeTimer);
-    chargeTimer = null;
-    const button = document.getElementById("blow-btn");
-    if (button) button.classList.remove("is-charging");
-  }
-
   function setBlowUiVisible(visible) {
+    if (!visible) releaseBlowHold();
     document.getElementById("blow-btn").hidden = !visible;
     document.getElementById("cake-hint").hidden = !visible;
   }
 
-  function handleBlowSignal() {
+  function handleBlowSignal(source) {
+    const validSource = (holdingBlow && (source === "microphone" || source === "fallback")) || (TEST_MODE && source === "test");
+    if (!validSource) return Promise.resolve(false);
     if (!activeCandleId || songPlaying || spinning || state[activeCandleId].blown) return Promise.resolve(false);
     return blowOutCandle(activeCandleId);
   }
@@ -441,7 +532,7 @@
     activeCandleId = null;
     songPlaying = true;
     breathAboveSince = null;
-    cancelCharge();
+    releaseBlowHold();
     setBlowUiVisible(false);
     updateAllLegend();
     updateSpinButton();
@@ -468,11 +559,10 @@
   function armCandle(id) {
     activeCandleId = id;
     const person = personById(id);
-    setStatus(`¡Le toca a ${person.displayName || person.name}! Ya estás en su asiento: sopla su vela.`);
+    setStatus(`¡Le toca a ${person.displayName || person.name}! Mantén pulsado el botón y sopla fuerte.`);
     setBlowUiVisible(true);
     updateAllLegend();
     updateSpinButton();
-    ensureMic();
   }
 
   async function onSpinClick() {
@@ -485,7 +575,7 @@
     spinning = true;
     cake.clearArmedHighlight();
     setBlowUiVisible(false);
-    setStatus("La tarta gira despacio… espera a que la cámara encuentre el asiento.");
+    setStatus("La tarta gira despacio… la cámara se acerca solo un poco y vuelve a la vista general.");
     updateAllLegend();
     updateSpinButton();
 
@@ -621,41 +711,28 @@
   }
 
   function bindBlowControls() {
-    document.addEventListener("keydown", (event) => {
-      if (event.code !== "Space" || event.repeat) return;
-      const tagName = event.target && event.target.tagName;
-      if (["BUTTON", "INPUT", "TEXTAREA", "A"].includes(tagName)) return;
-      event.preventDefault();
-      startCharge();
-    });
-    document.addEventListener("keyup", (event) => {
-      if (event.code === "Space") cancelCharge();
-    });
-
     const blowButton = document.getElementById("blow-btn");
     blowButton.addEventListener("pointerdown", (event) => {
       event.preventDefault();
-      startCharge();
+      startBlowHold();
     });
     ["pointerup", "pointercancel", "pointerleave"].forEach((eventName) => {
-      blowButton.addEventListener(eventName, cancelCharge);
+      blowButton.addEventListener(eventName, releaseBlowHold);
     });
-    blowButton.addEventListener("touchstart", (event) => {
-      event.preventDefault();
-      startCharge();
-    }, { passive: false });
-    blowButton.addEventListener("touchend", cancelCharge);
-    blowButton.addEventListener("touchcancel", cancelCharge);
   }
 
   function exposeTestApi() {
     if (!TEST_MODE) return;
     global.__birthdayTest = {
       spin: onSpinClick,
-      blow: handleBlowSignal,
+      blow: () => handleBlowSignal("test"),
+      startBlowHold,
+      endBlowHold: releaseBlowHold,
+      microphoneLevel: processMicrophoneLevel,
       bite: onSliceChosen,
       dragCamera: (deltaX) => cake && cake.testDragBy(deltaX),
-      previewLyrics: previewLyricsForTest,
+      previewSong: previewSongForTest,
+      talkToNpc: (id) => cake && cake.talkToNpc(id),
       closeComic,
       getState() {
         const peopleState = {};
@@ -667,10 +744,21 @@
           allBlown,
           nomSoundCount,
           modalOpen: !document.getElementById("comic-modal").classList.contains("hidden"),
-          karaoke: {
-            visible: !document.getElementById("karaoke").classList.contains("hidden"),
-            line: document.getElementById("karaoke-line").textContent,
-            progress: document.getElementById("karaoke-progress").style.width,
+          songExperience: {
+            visible: !document.getElementById("song-experience").classList.contains("hidden"),
+            title: document.getElementById("lyrics-title").textContent,
+            lines: [...document.querySelectorAll("#lyrics-copy p")].map((line) => line.textContent),
+            transform: document.getElementById("lyrics-crawl").style.transform,
+            progress: songExperienceRun ? songExperienceRun.progress : 0,
+            photoVisible: !document.getElementById("song-photo-wrap").classList.contains("hidden"),
+            photoIndex: songExperienceRun ? songExperienceRun.photoIndex : -1,
+          },
+          microphone: {
+            state: micState,
+            holding: holdingBlow,
+            hasStream: Boolean(micStream),
+            threshold: BLOW_LEVEL_THRESHOLD,
+            fallbackHoldMs: FALLBACK_HOLD_MS,
           },
           people: peopleState,
           scene: cake ? cake.getSnapshot() : null,
@@ -704,7 +792,9 @@
       cake = global.Cake3D.create({
         canvas: document.getElementById("cake-canvas"),
         people: CONFIG.people,
+        dialogLayer: document.getElementById("npc-dialog-layer"),
       });
+      loadNpcData().then((data) => cake && cake.setNpcData(data));
       cake.onSliceClick(onSliceChosen);
       document.getElementById("spin-btn").addEventListener("click", onSpinClick);
       updateSpinButton();
@@ -720,7 +810,7 @@
   }
 
   global.addEventListener("beforeunload", () => {
-    if (micStream) micStream.getTracks().forEach((track) => track.stop());
+    releaseBlowHold();
     if (cake) cake.dispose();
   });
   document.addEventListener("DOMContentLoaded", init);
