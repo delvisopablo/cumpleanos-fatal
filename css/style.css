@@ -114,11 +114,12 @@ a:focus-visible {
   display: block;
   width: 100%;
   height: 100%;
-  touch-action: manipulation;
-  cursor: default;
+  touch-action: none;
+  cursor: grab;
 }
 
 #cake-canvas.is-biteable { cursor: pointer; }
+#cake-canvas.is-dragging { cursor: grabbing; }
 
 .scene-shade {
   position: absolute;
@@ -191,6 +192,63 @@ a:focus-visible {
 .blow-btn.is-charging {
   transform: scale(0.96);
   filter: brightness(1.12);
+}
+
+.karaoke {
+  position: absolute;
+  z-index: 8;
+  left: 50%;
+  bottom: calc(var(--dock-height) + 8.3rem);
+  width: min(88vw, 760px);
+  transform: translateX(-50%);
+  padding: 0.9rem 1.25rem 0.75rem;
+  border: 1px solid rgba(255, 222, 135, 0.52);
+  border-radius: 18px;
+  color: #fff;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(33, 13, 60, 0.9), rgba(17, 7, 34, 0.94));
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.44), 0 0 28px rgba(255, 199, 84, 0.15);
+  backdrop-filter: blur(14px);
+  pointer-events: none;
+}
+
+.karaoke.hidden { display: none; }
+
+.karaoke-person {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: #ffe19a;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.karaoke-line {
+  min-height: 1.25em;
+  margin: 0;
+  font-size: clamp(1.15rem, 3vw, 1.85rem);
+  font-weight: 900;
+  line-height: 1.18;
+  text-wrap: balance;
+  text-shadow: 0 3px 12px rgba(0, 0, 0, 0.55);
+}
+
+.karaoke-progress {
+  display: block;
+  height: 3px;
+  margin-top: 0.7rem;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.17);
+}
+
+.karaoke-progress > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ff75a0, #ffd76f);
 }
 
 .scene-fallback {
@@ -581,6 +639,14 @@ a:focus-visible {
     bottom: calc(var(--dock-height) + 0.55rem);
     padding: 0.6rem 0.75rem;
   }
+
+  .karaoke {
+    bottom: calc(var(--dock-height) + 7.4rem);
+    width: min(92vw, 560px);
+    padding: 0.72rem 0.8rem 0.6rem;
+  }
+
+  .karaoke-line { font-size: clamp(1rem, 5.4vw, 1.35rem); }
 
   .party-dock { padding-top: 0.55rem; }
 

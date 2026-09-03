@@ -21,6 +21,7 @@
   let allBlown = false;
   let currentAudio = null;
   let nomSoundCount = 0;
+  let karaokeRun = null;
 
   let modalPerson = null;
   let modalIndex = 0;
@@ -146,13 +147,85 @@
     else label.textContent = "Girar la tarta";
   }
 
+  async function loadLyrics(id) {
+    if (global.location.protocol === "file:") return [];
+    try {
+      const response = await fetch(`assets/lyrics/${encodeURIComponent(id)}.txt`, { cache: "no-store" });
+      if (!response.ok) return [];
+      const text = await response.text();
+      return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function hideKaraoke(completed = false) {
+    const run = karaokeRun;
+    karaokeRun = null;
+    if (run && run.frame) global.cancelAnimationFrame(run.frame);
+    const panel = document.getElementById("karaoke");
+    if (panel) panel.classList.add("hidden");
+    const progress = document.getElementById("karaoke-progress");
+    if (progress) progress.style.width = "0%";
+    if (run && run.resolve) run.resolve(completed);
+  }
+
+  function startKaraoke(person, lines, durationSeconds, getCurrentTime) {
+    hideKaraoke(false);
+    if (!Array.isArray(lines) || lines.length === 0 || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return Promise.resolve(false);
+    }
+
+    const panel = document.getElementById("karaoke");
+    const personLabel = document.getElementById("karaoke-person");
+    const lineLabel = document.getElementById("karaoke-line");
+    const progressBar = document.getElementById("karaoke-progress");
+    personLabel.textContent = `Cantando con ${person.displayName || person.name}`;
+    lineLabel.textContent = lines[0];
+    progressBar.style.width = "0%";
+    panel.classList.remove("hidden");
+
+    return new Promise((resolve) => {
+      const run = { frame: null, resolve };
+      karaokeRun = run;
+
+      function update() {
+        if (karaokeRun !== run) return;
+        const currentTime = Math.max(0, Number(getCurrentTime()) || 0);
+        const ratio = Math.min(1, currentTime / durationSeconds);
+        const lineIndex = Math.min(lines.length - 1, Math.floor(ratio * lines.length));
+        lineLabel.textContent = lines[lineIndex];
+        progressBar.style.width = `${ratio * 100}%`;
+        if (ratio >= 1) {
+          hideKaraoke(true);
+          return;
+        }
+        run.frame = global.requestAnimationFrame(update);
+      }
+
+      run.frame = global.requestAnimationFrame(update);
+    });
+  }
+
+  function previewLyricsForTest(lines, durationMs) {
+    const startedAt = performance.now();
+    return startKaraoke(
+      CONFIG.people[0],
+      lines,
+      Math.max(1, durationMs) / 1000,
+      () => (performance.now() - startedAt) / 1000
+    );
+  }
+
   function playSong(id) {
     const person = personById(id);
+    const lyricsPromise = loadLyrics(id);
     return new Promise((resolve) => {
       if (currentAudio) {
         currentAudio.pause();
         currentAudio.removeAttribute("src");
       }
+      hideKaraoke(false);
 
       const audio = new Audio();
       currentAudio = audio;
@@ -167,6 +240,7 @@
         clearTimeout(noticeTimer);
         audio.removeEventListener("ended", handleEnded);
         audio.removeEventListener("error", handleMissing);
+        audio.removeEventListener("loadedmetadata", handleMetadata);
       }
 
       function finish(result) {
@@ -177,7 +251,14 @@
       }
 
       function handleEnded() {
+        hideKaraoke(true);
         finish({ played: true, missing: false });
+      }
+
+      async function handleMetadata() {
+        const lines = await lyricsPromise;
+        if (finished || currentAudio !== audio || lines.length === 0) return;
+        startKaraoke(person, lines, audio.duration, () => audio.currentTime);
       }
 
       function handleMissing() {
@@ -185,12 +266,14 @@
         missingStarted = true;
         clearTimeout(loadTimer);
         audio.pause();
+        hideKaraoke(false);
         showToast(`🎵 La canción de ${person.displayName || person.name} aún no está subida. La fiesta continúa.`, MISSING_AUDIO_NOTICE_MS);
         noticeTimer = setTimeout(() => finish({ played: false, missing: true }), MISSING_AUDIO_NOTICE_MS);
       }
 
       audio.addEventListener("ended", handleEnded);
       audio.addEventListener("error", handleMissing);
+      audio.addEventListener("loadedmetadata", handleMetadata, { once: true });
       audio.preload = "auto";
       audio.src = person.audio;
 
@@ -385,7 +468,7 @@
   function armCandle(id) {
     activeCandleId = id;
     const person = personById(id);
-    setStatus(`¡Le toca a ${person.displayName || person.name}! Sopla su vela.`);
+    setStatus(`¡Le toca a ${person.displayName || person.name}! Ya estás en su asiento: sopla su vela.`);
     setBlowUiVisible(true);
     updateAllLegend();
     updateSpinButton();
@@ -402,7 +485,7 @@
     spinning = true;
     cake.clearArmedHighlight();
     setBlowUiVisible(false);
-    setStatus("La tarta está girando…");
+    setStatus("La tarta gira despacio… espera a que la cámara encuentre el asiento.");
     updateAllLegend();
     updateSpinButton();
 
@@ -571,6 +654,8 @@
       spin: onSpinClick,
       blow: handleBlowSignal,
       bite: onSliceChosen,
+      dragCamera: (deltaX) => cake && cake.testDragBy(deltaX),
+      previewLyrics: previewLyricsForTest,
       closeComic,
       getState() {
         const peopleState = {};
@@ -582,6 +667,11 @@
           allBlown,
           nomSoundCount,
           modalOpen: !document.getElementById("comic-modal").classList.contains("hidden"),
+          karaoke: {
+            visible: !document.getElementById("karaoke").classList.contains("hidden"),
+            line: document.getElementById("karaoke-line").textContent,
+            progress: document.getElementById("karaoke-progress").style.width,
+          },
           people: peopleState,
           scene: cake ? cake.getSnapshot() : null,
         };

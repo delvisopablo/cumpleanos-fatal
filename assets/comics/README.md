@@ -2,7 +2,7 @@
 
 Cada persona tiene su propia carpeta:
 
-- `diego-s1/`
+- `geido/`
 - `diego-s2/`
 - `carlos/`
 - `daviles/`

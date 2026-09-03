@@ -3,11 +3,22 @@ import { writeFile } from "node:fs/promises";
 const cdpPort = process.env.CDP_PORT || "9223";
 const siteUrl = process.env.SITE_URL || "http://127.0.0.1:4173/index.html?test=1";
 const screenshotPath = process.env.SCREENSHOT_PATH || "/tmp/cumpleanos-fatal-3d.png";
+const seatScreenshotPath = process.env.SEAT_SCREENSHOT_PATH || "/tmp/cumpleanos-fatal-seat.png";
 const mobileScreenshotPath = process.env.MOBILE_SCREENSHOT_PATH || "/tmp/cumpleanos-fatal-mobile.png";
 const separator = siteUrl.includes("?") ? "&" : "?";
 const runId = Date.now();
 const desktopUrl = `${siteUrl}${separator}run=${runId}`;
 const mobileUrl = `${siteUrl}${separator}run=${runId}&mobile=1`;
+const productionUrlObject = new URL(siteUrl);
+productionUrlObject.searchParams.delete("test");
+productionUrlObject.searchParams.set("verifySpin", String(runId));
+const productionUrl = productionUrlObject.href;
+const geidoPageUrlObject = new URL("personas/geido-senchaz.html", siteUrl);
+geidoPageUrlObject.searchParams.set("routeTest", String(runId));
+const geidoPageUrl = geidoPageUrlObject.href;
+const carlosPageUrlObject = new URL("personas/carlos-conde.html", siteUrl);
+carlosPageUrlObject.searchParams.set("routeTest", String(runId));
+const carlosPageUrl = carlosPageUrlObject.href;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -51,7 +62,10 @@ socket.addEventListener("message", (event) => {
   }
   if (message.method === "Log.entryAdded" && message.params.entry.level === "error") {
     const entry = message.params.entry;
-    if (!entry.url?.includes("/assets/audio/")) errors.push(entry.text);
+    const expectedMissingAsset = entry.source === "network" && /404|Failed to load resource/i.test(entry.text);
+    if (!entry.url?.includes("/assets/audio/") && !entry.url?.includes("/assets/lyrics/") && !expectedMissingAsset) {
+      errors.push(entry.text);
+    }
   }
 });
 
@@ -104,6 +118,10 @@ const initialUi = await evaluate(`(() => {
     dockBottom: Math.round(dock.bottom),
     buttonDisabled: document.getElementById("spin-btn").disabled,
     chipCount: document.querySelectorAll(".legend-item").length,
+    chipNames: [...document.querySelectorAll(".legend-name")].map((item) => item.textContent),
+    firstLink: document.querySelector(".person-link")?.getAttribute("href"),
+    description: document.querySelector('meta[name="description"]')?.content,
+    socialImage: document.querySelector('meta[property="og:image"]')?.content,
   };
 })()`);
 assert(initialUi.textLength > 80, "La página se ha renderizado vacía");
@@ -111,6 +129,10 @@ assert(initialUi.fallbackHidden, "Se mostró el fallback en vez de la escena 3D"
 assert(initialUi.canvas.width >= 1000 && initialUi.canvas.height >= 700, "El canvas no ocupa la escena");
 assert(initialUi.dockBottom === 800, "La barra de personas no está fijada abajo");
 assert(initialUi.chipCount === 4, "No aparecen las cuatro personas");
+assert(initialUi.chipNames[0] === "Geido Senchaz", "El nuevo nombre de Geido no aparece en la mesa");
+assert(initialUi.firstLink === "personas/geido-senchaz.html", "La página individual de Geido no está enlazada");
+assert(initialUi.description.includes("Geido"), "Los metadatos principales conservan el nombre antiguo");
+assert(initialUi.socialImage.endsWith("/public/og.png"), "La nueva tarjeta social no está enlazada");
 assert(!initialUi.buttonDisabled, "La ruleta empieza bloqueada");
 
 const screenshot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
@@ -122,12 +144,83 @@ assert(
   JSON.stringify(sceneState.placeSettings.map((setting) => setting.drinkType)) === JSON.stringify(["beer", "wine", "beer", "wine"]),
   "Las bebidas no respetan config.js"
 );
+assert(sceneState.placeSettings.every((setting) => setting.hasLiquid), "Hay vasos sin líquido visible");
+assert(
+  sceneState.placeSettings.filter((setting) => setting.drinkType === "beer").every((setting) => setting.hasFoam),
+  "A una cerveza le falta espuma"
+);
+assert(sceneState.productionSpinDurationMs >= 7000, "La ruleta de producción no es lo bastante lenta");
+assert(sceneState.walkers.length >= 8, "Faltan invitados low-poly caminando por la sala");
+assert(sceneState.walkers.filter((walker) => walker.kind === "girl").length >= 3, "Faltan chicas entre los invitados");
+assert(
+  ["hat", "cap", "beard"].every((accessory) => sceneState.walkers.some((walker) => walker.accessory === accessory)),
+  "Los invitados no tienen suficientes rasgos variados"
+);
+assert(sceneState.walkers.every((walker) => !walker.intersectsFurniture), "Un invitado atraviesa la mesa o una silla");
+
+const walkerBefore = sceneState.walkers.map((walker) => walker.position);
+await new Promise((resolve) => setTimeout(resolve, 260));
+const walkerAfter = (await state()).scene.walkers;
+assert(
+  walkerAfter.some((walker, index) => Math.hypot(
+    walker.position.x - walkerBefore[index].x,
+    walker.position.z - walkerBefore[index].z
+  ) > 0.005),
+  "Los invitados no avanzan por sus recorridos"
+);
+assert(walkerAfter.every((walker) => !walker.intersectsFurniture), "Un invitado entró en la zona del mobiliario");
+
+const cakeDragStart = sceneState.cameraPose.azimuth;
+await send("Input.dispatchMouseEvent", { type: "mousePressed", x: 640, y: 410, button: "left", buttons: 1, clickCount: 1 });
+await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 750, y: 410, button: "left", buttons: 1 });
+await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 750, y: 410, button: "left", buttons: 0, clickCount: 1 });
+const cakeDragEnd = (await state()).scene.cameraPose.azimuth;
+assert(Math.abs(cakeDragEnd - cakeDragStart) < 0.02, "Arrastrar sobre la tarta movió la cámara");
+
+const cameraBeforeDrag = cakeDragEnd;
+await send("Input.dispatchMouseEvent", { type: "mousePressed", x: 25, y: 420, button: "left", buttons: 1, clickCount: 1 });
+await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 135, y: 420, button: "left", buttons: 1 });
+await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 135, y: 420, button: "left", buttons: 0, clickCount: 1 });
+const cameraAfterDrag = (await state()).scene.cameraPose.azimuth;
+assert(Math.abs(cameraAfterDrag - cameraBeforeDrag) > 0.3, "El arrastre con ratón no hizo orbitar la cámara");
+
+await evaluate(`(() => {
+  window.__lyricPreview = window.__birthdayTest.previewLyrics(["Primera línea", "Segunda línea", "Tercera línea"], 420);
+  return true;
+})()`);
+await waitFor(async () => (await state()).karaoke.visible, "El karaoke de prueba no apareció");
+const seenLyrics = [];
+for (let sample = 0; sample < 12; sample++) {
+  const lyricState = (await state()).karaoke;
+  if (lyricState.visible && !seenLyrics.includes(lyricState.line)) seenLyrics.push(lyricState.line);
+  await new Promise((resolve) => setTimeout(resolve, 45));
+}
+await evaluate("window.__lyricPreview");
+const karaokeAfter = (await state()).karaoke;
+assert(
+  JSON.stringify(seenLyrics) === JSON.stringify(["Primera línea", "Segunda línea", "Tercera línea"]),
+  `Las líneas de karaoke no avanzaron proporcionalmente: ${seenLyrics.join(" / ")}`
+);
+assert(!karaokeAfter.visible, "El karaoke no se ocultó al terminar la canción");
 
 // Primera ronda: botón real y soplido real con la barra espaciadora.
 await evaluate("document.getElementById('spin-btn').click()");
+const dragDuringAutomaticMove = await evaluate("window.__birthdayTest.dragCamera(80)");
+assert(dragDuringAutomaticMove === false, "El arrastre interrumpió un movimiento automático de cámara");
 const firstId = await waitFor(async () => (await state()).activeCandleId, "La ruleta no eligió una vela");
 const afterFirstSpin = await state();
 assert(afterFirstSpin.scene.maxCameraFocus > 0.9, "La cámara no se acercó durante la ruleta");
+assert(afterFirstSpin.scene.seatedPersonId === firstId, "La cámara no terminó en el asiento de la persona elegida");
+const firstSetting = afterFirstSpin.scene.placeSettings.find((setting) => setting.id === firstId);
+const expectedSeatAzimuth = Math.atan2(firstSetting.chairPosition.x, firstSetting.chairPosition.z);
+assert(
+  Math.abs(afterFirstSpin.scene.cameraPose.azimuth - expectedSeatAzimuth) < 0.02,
+  "La cámara terminó en un asiento incorrecto"
+);
+await new Promise((resolve) => setTimeout(resolve, 100));
+const seatScreenshot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+await writeFile(seatScreenshotPath, Buffer.from(seatScreenshot.data, "base64"));
+assert(await evaluate("window.__birthdayTest.dragCamera(-35)"), "La cámara no volvió a responder tras llegar al asiento");
 const blockedByActiveRound = await evaluate("window.__birthdayTest.spin()");
 assert(blockedByActiveRound === null, "La ruleta permitió saltarse una vela activa");
 
@@ -219,6 +312,20 @@ assert(mobileUi.spin.left >= 0 && mobileUi.spin.right <= mobileUi.viewport.width
 const mobileScreenshot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
 await writeFile(mobileScreenshotPath, Buffer.from(mobileScreenshot.data, "base64"));
 
+const mobileAzimuthBefore = (await state()).scene.cameraPose.azimuth;
+await send("Input.dispatchTouchEvent", {
+  type: "touchStart",
+  touchPoints: [{ x: 24, y: 410, radiusX: 2, radiusY: 2, force: 1, id: 9 }],
+});
+await send("Input.dispatchTouchEvent", {
+  type: "touchMove",
+  touchPoints: [{ x: 132, y: 410, radiusX: 2, radiusY: 2, force: 1, id: 9 }],
+});
+await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+await new Promise((resolve) => setTimeout(resolve, 60));
+const mobileAzimuthAfter = (await state()).scene.cameraPose.azimuth;
+assert(Math.abs(mobileAzimuthAfter - mobileAzimuthBefore) > 0.25, "El arrastre táctil no hizo orbitar la cámara");
+
 // Alternativa táctil: giro y pulsación mantenida sobre el botón de soplar.
 await evaluate("document.getElementById('spin-btn').click()");
 await waitFor(async () => (await state()).activeCandleId, "La ruleta móvil no eligió una vela");
@@ -236,6 +343,64 @@ await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 assert(Object.values(touchState.people).some((person) => person.blown), "La pulsación táctil no apagó la vela");
 await waitFor(async () => !(await state()).songPlaying, "El aviso móvil dejó la fiesta bloqueada");
 
+// La ruta normal conserva una ruleta realmente lenta; ?test solo acelera el resto del recorrido.
+await send("Emulation.setDeviceMetricsOverride", {
+  width: 1280,
+  height: 800,
+  deviceScaleFactor: 1,
+  mobile: false,
+});
+await send("Emulation.setEmulatedMedia", {
+  media: "screen",
+  features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
+});
+await send("Page.navigate", { url: productionUrl });
+await waitFor(
+  () => evaluate(`${JSON.stringify(productionUrl)} === location.href && window.__birthdayReady === true`),
+  "La escena de producción no terminó de arrancar"
+);
+await evaluate(`(() => {
+  window.__productionSpinStarted = performance.now();
+  document.getElementById("spin-btn").click();
+  return true;
+})()`);
+await waitFor(
+  () => evaluate("document.getElementById('cake-status').textContent.startsWith('¡Le toca a ')") ,
+  "La ruleta lenta de producción no terminó",
+  13000
+);
+const productionSpinElapsed = await evaluate("performance.now() - window.__productionSpinStarted");
+assert(productionSpinElapsed >= 7400, `La ruleta de producción duró solo ${Math.round(productionSpinElapsed)} ms`);
+assert(productionSpinElapsed < 11000, "La ruleta de producción tardó demasiado en llegar al asiento");
+
+await send("Page.navigate", { url: geidoPageUrl });
+await waitFor(
+  () => evaluate(`${JSON.stringify(geidoPageUrl)} === location.href && document.body.dataset.personId === "geido"`),
+  "La página individual de Geido no cargó"
+);
+const geidoPage = await evaluate(`({
+  title: document.title,
+  name: document.getElementById("person-name")?.textContent,
+  songButton: document.getElementById("play-song")?.textContent,
+  description: document.querySelector('meta[name="description"]')?.content,
+})`);
+assert(geidoPage.title.startsWith("Geido Senchaz"), "El título individual de Geido es incorrecto");
+assert(geidoPage.name === "Geido Senchaz", "La página individual no muestra el nombre de Geido");
+assert(geidoPage.songButton.includes("canción"), "La página individual de Geido no conserva su canción");
+assert(geidoPage.description.includes("Geido Senchaz"), "La descripción individual de Geido es incorrecta");
+
+await send("Page.navigate", { url: carlosPageUrl });
+await waitFor(
+  () => evaluate(`${JSON.stringify(carlosPageUrl)} === location.href && document.body.dataset.personId === "carlos"`),
+  "La página individual de Carlos no cargó"
+);
+const carlosPage = await evaluate(`({
+  title: document.title,
+  name: document.getElementById("person-name")?.textContent,
+})`);
+assert(carlosPage.title.startsWith("Carlos Conde"), "La ruta representativa de Carlos perdió sus metadatos");
+assert(carlosPage.name === "Carlos Conde", "La ruta representativa de Carlos perdió su contenido");
+
 assert(errors.length === 0, `Errores del navegador: ${errors.join(" | ")}`);
 
 console.log(JSON.stringify({
@@ -244,9 +409,14 @@ console.log(JSON.stringify({
   bites: finalState.nomSoundCount,
   comicsOpened: chosenIds.length,
   desktopScreenshot: screenshotPath,
+  seatScreenshot: seatScreenshotPath,
   mobileScreenshot: mobileScreenshotPath,
   mobileViewport: mobileUi.viewport,
   browserErrors: errors,
+  karaokeLines: seenLyrics,
+  walkers: sceneState.walkers.length,
+  productionSpinMs: Math.round(productionSpinElapsed),
+  detailPages: [geidoPage.name, carlosPage.name],
 }, null, 2));
 
 socket.close();

@@ -17,6 +17,8 @@
               Es opcional; si falta, se alternan ambas bebidas.
     audio  -> ruta al archivo de la canción. Súbelo a assets/audio/
               con ese mismo nombre de archivo.
+    letra  -> no necesita campo: se busca automáticamente en
+              assets/lyrics/<id>.txt, con una frase por línea.
     comics -> lista de imágenes del cómic, en orden. Puede tener 1 o
               varias páginas. Súbelas a assets/comics/<id>/ con esos
               nombres. Si la lista está vacía, se mostrará un aviso de
@@ -30,18 +32,22 @@
     1. Sube las imágenes a assets/comics/<id>/ (por ejemplo
        assets/comics/carlos/1.jpg, assets/comics/carlos/2.jpg...).
     2. Añade esas rutas, en orden, a la lista "comics" de esa persona.
+
+  CÓMO AÑADIR LA LETRA DE KARAOKE:
+    1. Crea assets/lyrics/<id>.txt (por ejemplo assets/lyrics/carlos.txt).
+    2. Escribe una línea de la canción por línea. Si falta, no se muestra nada.
 */
 
 const CONFIG = {
   people: [
     {
-      id: "diego-s1",
-      name: "Diego Sánchez",
-      displayName: "Diego Sánchez (1)",
+      id: "geido",
+      name: "Geido Senchaz",
+      displayName: "Geido Senchaz",
       color: "#ff5d8f",
-      page: "personas/diego-sanchez-1.html",
+      page: "personas/geido-senchaz.html",
       drink: "beer",
-      audio: "assets/audio/diego-s1.mp3",
+      audio: "assets/audio/geido.mp3",
       comics: []
     },
     {

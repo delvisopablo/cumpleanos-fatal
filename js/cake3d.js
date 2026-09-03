@@ -20,9 +20,10 @@
   const CANDLE_RADIUS = CAKE_RADIUS * 0.58;
   const CANDLE_HEIGHT = 1.28;
   const BITE_STEPS = 4;
-  const SPIN_DURATION_MS = TEST_MODE ? 120 : REDUCED_MOTION ? 700 : 3300;
-  const CAMERA_IN_MS = TEST_MODE ? 30 : REDUCED_MOTION ? 150 : 650;
-  const CAMERA_OUT_MS = TEST_MODE ? 30 : REDUCED_MOTION ? 150 : 720;
+  const PRODUCTION_SPIN_DURATION_MS = 7600;
+  const SPIN_DURATION_MS = TEST_MODE ? 420 : REDUCED_MOTION ? 1500 : PRODUCTION_SPIN_DURATION_MS;
+  const CAMERA_IN_MS = TEST_MODE ? 70 : REDUCED_MOTION ? 220 : 900;
+  const CAMERA_SEAT_MS = TEST_MODE ? 90 : REDUCED_MOTION ? 260 : 1250;
   const BLOW_DURATION_MS = TEST_MODE ? 40 : 680;
   const BITE_DURATION_MS = TEST_MODE ? 45 : 460;
   const TAU = Math.PI * 2;
@@ -46,6 +47,14 @@
 
   function easeInCubic(t) {
     return t * t * t;
+  }
+
+  function rouletteEase(t) {
+    return 1 - Math.pow(1 - t, 4.4);
+  }
+
+  function shortestAngleDelta(from, to) {
+    return ((to - from + Math.PI) % TAU + TAU) % TAU - Math.PI;
   }
 
   function setShadow(mesh, cast, receive) {
@@ -319,7 +328,15 @@
     card.position.y = TABLE_SURFACE_Y + 0.68;
     group.add(card);
 
-    return { chair, group, drinkType };
+    return {
+      chair,
+      group,
+      drinkType,
+      hasLiquid: true,
+      hasFoam: drinkType === "beer",
+      chairPosition: chairPosition.clone(),
+      platePosition: platePosition.clone(),
+    };
   }
 
   function createRoom(scene) {
@@ -380,7 +397,139 @@
     return group;
   }
 
-  function createCake(scene, people, glowTexture) {
+  function createWalker(options) {
+    const group = new THREE.Group();
+    const skin = new THREE.MeshStandardMaterial({ color: options.skin, roughness: 0.86 });
+    const cloth = new THREE.MeshStandardMaterial({ color: options.clothes, roughness: 0.84 });
+    const dark = new THREE.MeshStandardMaterial({ color: options.dark || 0x291b2f, roughness: 0.9 });
+    const accent = new THREE.MeshStandardMaterial({ color: options.accent || 0xffcf56, roughness: 0.82 });
+
+    const body = setShadow(
+      new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.46, 1.15, 7), cloth),
+      true,
+      true
+    );
+    body.position.y = 1.6;
+    group.add(body);
+
+    if (options.skirt) {
+      const skirt = setShadow(new THREE.Mesh(new THREE.ConeGeometry(0.58, 0.82, 7), accent), true, true);
+      skirt.position.y = 1.02;
+      group.add(skirt);
+    }
+
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.22, 7), skin);
+    neck.position.y = 2.23;
+    group.add(neck);
+
+    const head = setShadow(new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6), skin), true, true);
+    head.position.y = 2.58;
+    group.add(head);
+
+    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.355, 8, 5, 0, TAU, 0, Math.PI * 0.48), dark);
+    hair.position.y = 2.69;
+    group.add(hair);
+
+    if (options.beard) {
+      const beard = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.38, 7), dark);
+      beard.position.set(0, 2.39, 0.22);
+      beard.rotation.x = Math.PI;
+      group.add(beard);
+    }
+
+    if (options.accessory === "hat") {
+      const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 0.08, 12), accent);
+      brim.position.y = 2.89;
+      group.add(brim);
+      const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.38, 9), accent);
+      crown.position.y = 3.08;
+      group.add(crown);
+    } else if (options.accessory === "cap") {
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.37, 8, 5, 0, TAU, 0, Math.PI * 0.5), accent);
+      cap.position.y = 2.83;
+      group.add(cap);
+      const visor = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.07, 0.28), accent);
+      visor.position.set(0, 2.83, 0.31);
+      group.add(visor);
+    }
+
+    const limbs = [];
+    [-1, 1].forEach((side) => {
+      const armPivot = new THREE.Group();
+      armPivot.position.set(side * 0.42, 2.02, 0);
+      const arm = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.08, 0.92, 6), cloth), true, true);
+      arm.position.y = -0.42;
+      armPivot.add(arm);
+      group.add(armPivot);
+
+      const legPivot = new THREE.Group();
+      legPivot.position.set(side * 0.2, options.skirt ? 0.83 : 1.05, 0);
+      const leg = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.09, 1.02, 6), dark), true, true);
+      leg.position.y = -0.48;
+      legPivot.add(leg);
+      group.add(legPivot);
+      limbs.push({ arm: armPivot, leg: legPivot, side });
+    });
+
+    group.scale.setScalar(options.scale || 1);
+    group.userData.limbs = limbs;
+    return group;
+  }
+
+  function createCrowd(scene) {
+    const styles = [
+      { skin: 0xd99b72, clothes: 0x4fb6ff, accent: 0xffcf56, accessory: "cap", beard: true },
+      { skin: 0x7e4b32, clothes: 0xff5d8f, accent: 0x6fe0a0, accessory: "hat", skirt: true },
+      { skin: 0xf0bf99, clothes: 0x6fe0a0, accent: 0xc58bff, beard: true },
+      { skin: 0xb86f4f, clothes: 0xffcf56, accent: 0xff5d8f, accessory: "cap", skirt: true },
+      { skin: 0xefd0b2, clothes: 0xc58bff, accent: 0x4fb6ff, accessory: "hat" },
+      { skin: 0x8f573c, clothes: 0xf06b49, accent: 0xffcf56, skirt: true },
+      { skin: 0xc9825b, clothes: 0x3fa58b, accent: 0xff7daf, accessory: "cap" },
+      { skin: 0xf2c5a4, clothes: 0x945ee8, accent: 0xffcf56, skirt: true, accessory: "hat" },
+    ];
+
+    return styles.map((style, index) => {
+      const mesh = createWalker({ ...style, scale: 0.88 + (index % 3) * 0.045 });
+      scene.add(mesh);
+      return {
+        id: `guest-${index + 1}`,
+        mesh,
+        phase: (index / styles.length) * TAU + (index % 2 ? 0.18 : 0),
+        speed: 0.075 + (index % 4) * 0.009,
+        radiusX: 10.9 + (index % 3) * 0.72,
+        radiusZ: 7.9 + ((index + 1) % 3) * 0.52,
+        direction: index % 3 === 0 ? -1 : 1,
+        kind: style.skirt ? "girl" : "guest",
+        accessory: style.accessory || (style.beard ? "beard" : "none"),
+      };
+    });
+  }
+
+  function updateWalker(walker, time) {
+    const angle = walker.phase + time * walker.speed * walker.direction;
+    const nextAngle = angle + 0.012 * walker.direction;
+    const x = Math.cos(angle) * walker.radiusX;
+    const z = Math.sin(angle) * walker.radiusZ;
+    const nextX = Math.cos(nextAngle) * walker.radiusX;
+    const nextZ = Math.sin(nextAngle) * walker.radiusZ;
+    walker.mesh.position.set(x, 0, z);
+    walker.mesh.rotation.y = Math.atan2(nextX - x, nextZ - z);
+
+    const stride = Math.sin(time * 5.2 + walker.phase * 2);
+    walker.mesh.userData.limbs.forEach((limb) => {
+      limb.arm.rotation.x = stride * 0.52 * limb.side;
+      limb.leg.rotation.x = -stride * 0.58 * limb.side;
+    });
+  }
+
+  function intersectsFurniture(position) {
+    if (Math.abs(position.x) < 7.25 && Math.abs(position.z) < 5.2) return true;
+    const chairs = [[7.55, 0], [-7.55, 0], [0, 5.55], [0, -5.55]];
+    return chairs.some(([x, z]) => Math.hypot(position.x - x, position.z - z) < 1.35);
+  }
+
+  // TODO: ajustar geometría de la tarta según foto de referencia del usuario
+  function createCakeGeometry(scene, people, glowTexture) {
     const cakeRoot = new THREE.Group();
     cakeRoot.position.y = TABLE_SURFACE_Y + 0.09;
     scene.add(cakeRoot);
@@ -573,6 +722,7 @@
     const scene = new THREE.Scene();
     createRoom(scene);
     createTable(scene);
+    const walkers = createCrowd(scene);
 
     scene.add(new THREE.HemisphereLight(0xeadfff, 0x27132f, 1.4));
     const keyLight = new THREE.DirectionalLight(0xffe7bf, 3.2);
@@ -599,18 +749,27 @@
       const setting = createPlaceSetting(person, index, angleMid);
       scene.add(setting.chair);
       scene.add(setting.group);
-      placeSettings.push({ id: person.id, drinkType: setting.drinkType });
+      placeSettings.push({
+        id: person.id,
+        drinkType: setting.drinkType,
+        hasLiquid: setting.hasLiquid,
+        hasFoam: setting.hasFoam,
+        chairPosition: setting.chairPosition,
+        platePosition: setting.platePosition,
+      });
     });
 
-    const cake = createCake(scene, people, createGlowTexture());
+    const cake = createCakeGeometry(scene, people, createGlowTexture());
     const { cakeRoot, spinGroup, slices, candles, clickableMeshes } = cake;
 
     const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 120);
-    const cameraTarget = new THREE.Vector3(0, TABLE_SURFACE_Y + 0.72, 0);
-    const cameraHome = new THREE.Vector3();
-    const cameraClose = new THREE.Vector3();
+    const cameraTarget = new THREE.Vector3();
+    const overviewPose = { radius: 16.65, height: 8.15, azimuth: 0.73, targetY: TABLE_SURFACE_Y + 0.72 };
+    const cameraPose = { ...overviewPose };
     let cameraFocus = 0;
     let maxCameraFocus = 0;
+    let cameraAuto = false;
+    let seatedPersonId = null;
 
     let spinning = false;
     let armedId = null;
@@ -624,7 +783,12 @@
     const clock = new THREE.Clock();
 
     function updateCamera() {
-      camera.position.copy(cameraHome).lerp(cameraClose, cameraFocus);
+      camera.position.set(
+        Math.sin(cameraPose.azimuth) * cameraPose.radius,
+        cameraPose.height,
+        Math.cos(cameraPose.azimuth) * cameraPose.radius
+      );
+      cameraTarget.set(0, cameraPose.targetY, 0);
       camera.lookAt(cameraTarget);
     }
 
@@ -637,12 +801,15 @@
       camera.fov = aspect < 0.72 ? 44 : aspect < 1 ? 40 : 35;
       camera.updateProjectionMatrix();
 
-      if (aspect < 0.78) {
-        cameraHome.set(13.8, 10.8, 15.2);
-        cameraClose.set(7.8, 6.25, 8.8);
-      } else {
-        cameraHome.set(11.1, 8.15, 12.4);
-        cameraClose.set(6.75, 5.25, 7.55);
+      const nextOverview = aspect < 0.78
+        ? { radius: Math.hypot(13.8, 15.2), height: 10.8, azimuth: Math.atan2(13.8, 15.2) }
+        : { radius: Math.hypot(11.1, 12.4), height: 8.15, azimuth: Math.atan2(11.1, 12.4) };
+      overviewPose.radius = nextOverview.radius;
+      overviewPose.height = nextOverview.height;
+      if (!seatedPersonId && !cameraAuto && !spinning) {
+        cameraPose.radius = overviewPose.radius;
+        cameraPose.height = overviewPose.height;
+        if (!Number.isFinite(cameraPose.azimuth)) cameraPose.azimuth = nextOverview.azimuth;
       }
       updateCamera();
     }
@@ -703,6 +870,8 @@
         cakeRoot.rotation.z = 0.016 * Math.cos(elapsed * 0.61);
       }
 
+      walkers.forEach((walker) => updateWalker(walker, elapsed));
+
       candles.forEach((candle, id) => {
         if (!candle.blownOut) {
           const pulse = 1 + 0.07 * Math.sin(elapsed * 9 + candle.seed);
@@ -760,30 +929,42 @@
       if (candidates.length === 0) return null;
 
       spinning = true;
+      cameraAuto = true;
       armedId = null;
+      seatedPersonId = null;
       maxCameraFocus = 0;
       const target = candidates[Math.floor(Math.random() * candidates.length)];
       const candle = candles.get(target.id);
+      const setting = placeSettings.find((item) => item.id === target.id);
       const localAngle = degToRad(candle.angleMid);
-      const cameraAzimuth = Math.atan2(cameraClose.x, cameraClose.z);
-      const desiredRotation = cameraAzimuth - localAngle;
+      const seatAzimuth = Math.atan2(setting.chairPosition.x, setting.chairPosition.z);
+      const desiredRotation = seatAzimuth - localAngle;
       const currentRotation = spinGroup.rotation.y;
       const delta = ((desiredRotation - currentRotation) % TAU + TAU) % TAU;
-      const extraTurns = TEST_MODE ? 1 : 4 + Math.floor(Math.random() * 3);
+      const extraTurns = TEST_MODE ? 2 : 8 + Math.floor(Math.random() * 3);
       const finalRotation = currentRotation + delta + extraTurns * TAU;
 
-      const focusStart = cameraFocus;
+      const startPose = { ...cameraPose };
+      const closePose = {
+        radius: Math.max(5.8, startPose.radius * 0.62),
+        height: Math.max(4.7, startPose.height * 0.72),
+        azimuth: startPose.azimuth,
+        targetY: TABLE_SURFACE_Y + 0.9,
+      };
       const zoomIn = addTween({
         duration: CAMERA_IN_MS,
         ease: easeOutCubic,
         onUpdate: (progress) => {
-          cameraFocus = focusStart + (1 - focusStart) * progress;
+          cameraFocus = progress;
           maxCameraFocus = Math.max(maxCameraFocus, cameraFocus);
+          cameraPose.radius = startPose.radius + (closePose.radius - startPose.radius) * progress;
+          cameraPose.height = startPose.height + (closePose.height - startPose.height) * progress;
+          cameraPose.targetY = startPose.targetY + (closePose.targetY - startPose.targetY) * progress;
         },
       });
       const spin = addTween({
         duration: SPIN_DURATION_MS,
-        ease: easeInOutCubic,
+        ease: rouletteEase,
         onUpdate: (progress) => { spinGroup.rotation.y = currentRotation + (finalRotation - currentRotation) * progress; },
       });
 
@@ -791,14 +972,34 @@
       baseRotationY = ((finalRotation % TAU) + TAU) % TAU;
       spinGroup.rotation.y = baseRotationY;
 
+      const seatRadius = Math.hypot(setting.chairPosition.x, setting.chairPosition.z) + 0.88;
+      const seatPose = {
+        radius: seatRadius,
+        height: 3.52,
+        azimuth: seatAzimuth,
+        targetY: TABLE_SURFACE_Y + CAKE_HEIGHT + CANDLE_HEIGHT * 0.55,
+      };
+      const seatStart = { ...cameraPose };
+      const angleDelta = shortestAngleDelta(seatStart.azimuth, seatPose.azimuth);
       await addTween({
-        duration: CAMERA_OUT_MS,
+        duration: CAMERA_SEAT_MS,
         ease: easeInOutCubic,
-        onUpdate: (progress) => { cameraFocus = 1 - progress; },
-        onComplete: () => { cameraFocus = 0; },
+        onUpdate: (progress) => {
+          cameraPose.radius = seatStart.radius + (seatPose.radius - seatStart.radius) * progress;
+          cameraPose.height = seatStart.height + (seatPose.height - seatStart.height) * progress;
+          cameraPose.azimuth = seatStart.azimuth + angleDelta * progress;
+          cameraPose.targetY = seatStart.targetY + (seatPose.targetY - seatStart.targetY) * progress;
+          cameraFocus = 1 - progress;
+        },
+        onComplete: () => {
+          Object.assign(cameraPose, seatPose);
+          cameraFocus = 0;
+        },
       });
 
       spinning = false;
+      cameraAuto = false;
+      seatedPersonId = target.id;
       armedId = target.id;
       return target.id;
     }
@@ -890,20 +1091,67 @@
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
+    let dragPointerId = null;
+    let dragLastX = 0;
+    let dragDistance = 0;
+    let manualDragCount = 0;
 
-    function handlePointer(event) {
-      if (!interactive) return;
+    function setRayFromEvent(event) {
       const rect = canvas.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
-      const visibleMeshes = clickableMeshes.filter((mesh) => mesh.visible);
-      const hits = raycaster.intersectObjects(visibleMeshes, false);
-      if (hits.length === 0) return;
-      const id = hits[0].object.userData.personId;
-      sliceClickListeners.forEach((callback) => callback(id));
     }
-    canvas.addEventListener("pointerdown", handlePointer);
+
+    function handlePointerDown(event) {
+      setRayFromEvent(event);
+      const visibleMeshes = clickableMeshes.filter((mesh) => mesh.visible);
+      const sliceHits = raycaster.intersectObjects(visibleMeshes, false);
+
+      if (interactive && sliceHits.length > 0) {
+        const id = sliceHits[0].object.userData.personId;
+        sliceClickListeners.forEach((callback) => callback(id));
+        return;
+      }
+
+      const cakeHits = raycaster.intersectObject(cakeRoot, true);
+      if (cakeHits.length > 0 || spinning || cameraAuto) return;
+
+      dragPointerId = event.pointerId;
+      dragLastX = event.clientX;
+      dragDistance = 0;
+      canvas.classList.add("is-dragging");
+      if (canvas.setPointerCapture) canvas.setPointerCapture(event.pointerId);
+    }
+
+    function handlePointerMove(event) {
+      if (event.pointerId !== dragPointerId) return;
+      const deltaX = event.clientX - dragLastX;
+      dragLastX = event.clientX;
+      dragDistance += Math.abs(deltaX);
+      cameraPose.azimuth -= deltaX * 0.0062;
+      if (Math.abs(deltaX) > 0) manualDragCount += 1;
+    }
+
+    function endPointerDrag(event) {
+      if (event.pointerId !== dragPointerId) return;
+      if (canvas.releasePointerCapture && canvas.hasPointerCapture && canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+      }
+      dragPointerId = null;
+      canvas.classList.remove("is-dragging");
+    }
+
+    function testDragBy(deltaX) {
+      if (spinning || cameraAuto || !Number.isFinite(deltaX)) return false;
+      cameraPose.azimuth -= deltaX * 0.0062;
+      manualDragCount += 1;
+      return true;
+    }
+    canvas.addEventListener("pointerdown", handlePointerDown);
+    canvas.addEventListener("pointermove", handlePointerMove);
+    canvas.addEventListener("pointerup", endPointerDrag);
+    canvas.addEventListener("pointercancel", endPointerDrag);
 
     function getSnapshot() {
       const sliceState = {};
@@ -916,8 +1164,28 @@
         interactive,
         cameraFocus,
         maxCameraFocus,
+        cameraAuto,
+        cameraPose: { ...cameraPose },
+        seatedPersonId,
+        manualDragCount,
+        productionSpinDurationMs: PRODUCTION_SPIN_DURATION_MS,
+        spinDurationMs: SPIN_DURATION_MS,
         sliceState,
-        placeSettings: placeSettings.map((setting) => ({ ...setting })),
+        placeSettings: placeSettings.map((setting) => ({
+          id: setting.id,
+          drinkType: setting.drinkType,
+          hasLiquid: setting.hasLiquid,
+          hasFoam: setting.hasFoam,
+          chairPosition: { x: setting.chairPosition.x, y: setting.chairPosition.y, z: setting.chairPosition.z },
+          platePosition: { x: setting.platePosition.x, y: setting.platePosition.y, z: setting.platePosition.z },
+        })),
+        walkers: walkers.map((walker) => ({
+          id: walker.id,
+          kind: walker.kind,
+          accessory: walker.accessory,
+          position: { x: walker.mesh.position.x, y: walker.mesh.position.y, z: walker.mesh.position.z },
+          intersectsFurniture: intersectsFurniture(walker.mesh.position),
+        })),
       };
     }
 
@@ -928,12 +1196,16 @@
       biteSlice,
       setSlicesInteractive,
       onSliceClick,
+      testDragBy,
       getSnapshot,
       dispose() {
         destroyed = true;
         if (resizeObserver) resizeObserver.disconnect();
         else global.removeEventListener("resize", resize);
-        canvas.removeEventListener("pointerdown", handlePointer);
+        canvas.removeEventListener("pointerdown", handlePointerDown);
+        canvas.removeEventListener("pointermove", handlePointerMove);
+        canvas.removeEventListener("pointerup", endPointerDrag);
+        canvas.removeEventListener("pointercancel", endPointerDrag);
         renderer.dispose();
       },
     };
