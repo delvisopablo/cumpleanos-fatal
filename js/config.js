@@ -70,3 +70,8 @@ const CONFIG = {
     }
   ]
 };
+
+// Se expone explícitamente en window para que los módulos ES (cake3d.js,
+// script.js) puedan leerlo sin depender del scoping implícito entre
+// <script> clásicos y <script type="module">.
+window.CONFIG = CONFIG;

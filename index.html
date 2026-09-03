@@ -29,7 +29,13 @@
 
 <main>
   <div class="cake-stage">
-    <svg id="cake-svg" viewBox="0 0 520 460" role="img" aria-label="Tarta de cumpleaños con cuatro velas"></svg>
+    <canvas id="cake-canvas" role="img" aria-label="Tarta de cumpleaños en 3D con cuatro velas"></canvas>
+    <div class="cake-controls">
+      <button type="button" id="spin-btn" class="spin-btn">🎡 Girar la tarta</button>
+      <p class="cake-status" id="cake-status" aria-live="polite">Gira la tarta para elegir la primera vela.</p>
+      <button type="button" id="blow-btn" class="blow-btn" hidden>🎤 Mantén pulsado para soplar</button>
+      <p class="cake-hint" id="cake-hint" hidden>Sopla de verdad al micrófono, pulsa y mantén la barra espaciadora, o mantén pulsado el botón de arriba.</p>
+    </div>
   </div>
 
   <section class="people-section" aria-labelledby="people-title">
@@ -58,6 +64,7 @@
 <div id="audio-container" hidden></div>
 
 <script src="js/config.js"></script>
-<script src="js/script.js"></script>
+<script type="module" src="js/cake3d.js"></script>
+<script type="module" src="js/script.js"></script>
 </body>
 </html>

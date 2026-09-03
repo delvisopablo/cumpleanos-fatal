@@ -1,50 +1,30 @@
+// Orquestación de la página: estado de velas/porciones, ruleta, soplido
+// (micrófono / espacio / botón táctil), mordisco y modal de cómic.
+// La parte 3D vive en js/cake3d.js; aquí solo se decide "cuándo" pasa cada cosa.
+
 (function () {
   "use strict";
 
-  const SVG_NS = "http://www.w3.org/2000/svg";
+  const CONFIG = window.CONFIG;
+  const BLOW_SUSTAIN_MS = 260; // cuánto tiempo hay que mantener el soplido/espacio/tap
+  const BLOW_RMS_THRESHOLD = 0.17; // umbral de volumen (0-1) para considerar "soplido"
 
-  // Geometría de la tarta (vista cenital, tipo icono, sin perspectiva)
-  const CX = 260;         // centro X
-  const CY = 230;         // centro Y de la tarta
-  const R = 180;          // radio exterior de la tarta
-  const DRUM_OFFSET = 14; // asoma del "bizcocho" bajo la nata, para dar volumen
-  const SLICE_R = R - 16;
-  const CANDLE_R = SLICE_R * 0.62;
-  const CANDLE_H = 62;
-  const CANDLE_HIT_R = 22;
-  // Desplaza las porciones/velas para que las 4 velas queden en arriba/
-  // derecha/abajo/izquierda (en vez de en las diagonales), bien repartidas.
-  const ANGLE_OFFSET = -45;
-
-  const state = {};       // { id: { blown, eaten } }
+  const state = {}; // { id: { blown, eaten } }
   let currentAudio = null;
   let modalPerson = null;
   let modalIndex = 0;
 
-  function el(tag, attrs, parent) {
-    const node = document.createElementNS(SVG_NS, tag);
-    for (const k in attrs) node.setAttribute(k, attrs[k]);
-    if (parent) parent.appendChild(node);
-    return node;
-  }
+  let cake = null;
+  let activeCandleId = null;
+  let spinning = false;
+  let allBlown = false;
 
-  function polar(cx, cy, r, angleDeg) {
-    const rad = ((angleDeg - 0) * Math.PI) / 180;
-    return { x: cx + r * Math.sin(rad), y: cy - r * Math.cos(rad) };
-  }
-
-  function wedgePath(r, startDeg, endDeg) {
-    const p1 = polar(0, 0, r, startDeg);
-    const p2 = polar(0, 0, r, endDeg);
-    const large = endDeg - startDeg > 180 ? 1 : 0;
-    return `M 0 0 L ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${p2.x.toFixed(2)} ${p2.y.toFixed(2)} Z`;
-  }
+  // ---------- utilidades compartidas con la config ----------
 
   function displayNames(people) {
     if (people.every((p) => p.displayName)) {
       return people.map((p) => p.displayName);
     }
-
     const counts = {};
     people.forEach((p) => { counts[p.name] = (counts[p.name] || 0) + 1; });
     const seen = {};
@@ -56,6 +36,12 @@
       return p.name;
     });
   }
+
+  function personById(id) {
+    return CONFIG.people.find((p) => p.id === id);
+  }
+
+  // ---------- fondo de fiesta (globos/confeti), igual que antes ----------
 
   function buildBackground() {
     const bg = document.getElementById("party-bg");
@@ -81,96 +67,7 @@
     }
   }
 
-  function buildCake() {
-    const svg = document.getElementById("cake-svg");
-    const people = CONFIG.people;
-    const n = people.length;
-    const step = 360 / n;
-    const names = displayNames(people);
-
-    // defs
-    const defs = el("defs", {}, svg);
-    const flameGrad = el("radialGradient", { id: "flameGrad", cx: "50%", cy: "70%", r: "70%" }, defs);
-    el("stop", { offset: "0%", "stop-color": "#fff6c8" }, flameGrad);
-    el("stop", { offset: "45%", "stop-color": "#ffb347" }, flameGrad);
-    el("stop", { offset: "100%", "stop-color": "#ff5d3d" }, flameGrad);
-
-    // sombra de la tarta sobre la mesa
-    el("ellipse", {
-      cx: CX, cy: CY + R + 14, rx: R + 30, ry: 22,
-      fill: "rgba(0,0,0,0.28)"
-    }, svg);
-
-    // "bizcocho" asomando bajo la nata, para dar volumen
-    el("circle", { cx: CX, cy: CY + DRUM_OFFSET, r: R, fill: "#e7b06b" }, svg);
-
-    // superficie superior (nata)
-    el("circle", { cx: CX, cy: CY, r: R, fill: "#fff6e9" }, svg);
-
-    // porciones
-    const sliceGroup = el("g", { transform: `translate(${CX} ${CY})` }, svg);
-    people.forEach((p, i) => {
-      const start = i * step + ANGLE_OFFSET;
-      const end = start + step;
-      const slice = el("path", {
-        d: wedgePath(SLICE_R, start, end),
-        fill: p.color,
-        class: "slice",
-        id: `slice-${p.id}`,
-        "data-person": p.id
-      }, sliceGroup);
-      slice.addEventListener("click", () => onSliceClick(p.id));
-      // línea de separación
-      const line = polar(0, 0, SLICE_R, start);
-      el("line", { x1: 0, y1: 0, x2: line.x, y2: line.y, stroke: "rgba(255,255,255,0.55)", "stroke-width": 2 }, sliceGroup);
-    });
-
-    // borde decorativo de nata (piping)
-    for (let a = 0; a < 360; a += 14) {
-      const rad = (a * Math.PI) / 180;
-      const px = CX + (R - 6) * Math.sin(rad);
-      const py = CY - (R - 6) * Math.cos(rad);
-      el("circle", { cx: px.toFixed(2), cy: py.toFixed(2), r: 3, fill: "#ffffff" }, svg);
-    }
-
-    // velas
-    people.forEach((p, i) => {
-      const mid = i * step + step / 2 + ANGLE_OFFSET;
-      const rad = (mid * Math.PI) / 180;
-      const ax = CX + CANDLE_R * Math.sin(rad);
-      const ay = CY - CANDLE_R * Math.cos(rad);
-
-      const g = el("g", { class: "candle", id: `candle-${p.id}`, transform: `translate(${ax.toFixed(2)} ${ay.toFixed(2)})` }, svg);
-
-      el("rect", { x: -8, y: -CANDLE_H, width: 16, height: CANDLE_H, rx: 3, fill: p.color, stroke: "rgba(0,0,0,0.15)", "stroke-width": 1 }, g);
-      el("rect", { x: -8, y: -CANDLE_H + 10, width: 16, height: 6, fill: "rgba(255,255,255,0.55)" }, g);
-      el("rect", { x: -8, y: -CANDLE_H + 30, width: 16, height: 6, fill: "rgba(255,255,255,0.55)" }, g);
-      el("line", { x1: 0, y1: -CANDLE_H, x2: 0, y2: -CANDLE_H - 10, stroke: "#6b4a2f", "stroke-width": 2 }, g);
-
-      const flameGroup = el("g", { class: "flame-group", transform: `translate(0 ${-CANDLE_H - 10})` }, g);
-      el("ellipse", { class: "flame-glow", cx: 0, cy: -6, rx: 18, ry: 20, fill: "url(#flameGrad)", opacity: 0.6 }, flameGroup);
-      el("path", {
-        class: "flame",
-        d: "M0,-24 C7,-16 8,-6 0,2 C-8,-6 -7,-16 0,-24 Z",
-        fill: "url(#flameGrad)"
-      }, flameGroup);
-
-      const smoke = el("path", {
-        class: "smoke-curl",
-        d: "M0,-10 C6,-16 -6,-22 0,-28 C6,-34 -4,-40 2,-46",
-        fill: "none", stroke: "#c9c9c9", "stroke-width": 3, "stroke-linecap": "round",
-        transform: `translate(0 ${-CANDLE_H - 10})`
-      }, g);
-
-      const hit = el("circle", { class: "candle-hit", cx: 0, cy: -CANDLE_H - 14, r: CANDLE_HIT_R, fill: "transparent" }, g);
-      hit.addEventListener("click", () => onCandleClick(p.id));
-
-      state[p.id] = { blown: false, eaten: false };
-    });
-
-    // pie de foto: nombres sobre la tarta (leyenda) — se construye aparte
-    renderLegend(names);
-  }
+  // ---------- leyenda ----------
 
   function renderLegend(names) {
     const ul = document.getElementById("legend");
@@ -212,43 +109,12 @@
     status.textContent = s.eaten ? "😋" : s.blown ? "🍰" : "🕯️";
   }
 
-  function spawnPuffs(id) {
-    const candle = document.getElementById(`candle-${id}`);
-    const layer = candle;
-    for (let i = 0; i < 6; i++) {
-      const c = el("circle", {
-        class: "puff",
-        cx: (Math.random() - 0.5) * 14,
-        cy: -CANDLE_H - 14,
-        r: 4 + Math.random() * 4
-      }, layer);
-      c.style.animationDelay = `${i * 0.04}s`;
-      c.addEventListener("animationend", () => c.remove());
-      setTimeout(() => c.remove(), 1200);
-    }
-  }
-
-  function onCandleClick(id) {
-    if (state[id].blown) return;
-    state[id].blown = true;
-
-    const candle = document.getElementById(`candle-${id}`);
-    candle.classList.add("blown");
-    spawnPuffs(id);
-
-    document.getElementById(`slice-${id}`).classList.add("unlocked");
-    updateLegend(id);
-
-    playSong(id);
-  }
+  // ---------- audio: canción de cada persona ----------
 
   function playSong(id) {
-    const person = CONFIG.people.find((p) => p.id === id);
+    const person = personById(id);
     if (!currentAudio) {
       currentAudio = new Audio();
-      currentAudio.addEventListener("error", () => {
-        // ignorado aquí: el aviso ya lo damos desde el catch de play()
-      });
     }
     currentAudio.pause();
     currentAudio.src = person.audio;
@@ -260,50 +126,244 @@
     }
   }
 
-  function onSliceClick(id) {
-    const s = state[id];
-    if (!s.blown || s.eaten) return;
-    s.eaten = true;
+  // ---------- sonido sintetizado "ñam ñam" (sin depender de un mp3) ----------
 
-    const slice = document.getElementById(`slice-${id}`);
-    spawnCrumbs(id);
-    slice.classList.add("eaten");
-    updateLegend(id);
-
-    setTimeout(() => openComic(id), 350);
+  let sfxCtx = null;
+  function getSfxCtx() {
+    if (!sfxCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      sfxCtx = new Ctx();
+    }
+    return sfxCtx;
   }
 
-  function spawnCrumbs(id) {
-    const person = CONFIG.people.find((p) => p.id === id);
-    const idx = CONFIG.people.findIndex((p) => p.id === id);
-    const step = 360 / CONFIG.people.length;
-    const mid = idx * step + step / 2 + ANGLE_OFFSET;
-    const rad = (mid * Math.PI) / 180;
-    const cx = CX + SLICE_R * 0.55 * Math.sin(rad);
-    const cy = CY - SLICE_R * 0.55 * Math.cos(rad);
-
-    const svg = document.getElementById("cake-svg");
-    for (let i = 0; i < 10; i++) {
-      const crumb = el("circle", {
-        class: "crumb",
-        cx: cx + (Math.random() - 0.5) * 30,
-        cy: cy + (Math.random() - 0.5) * 20,
-        r: 2 + Math.random() * 3,
-        style: `--crumb-color:${person.color}`
-      }, svg);
-      crumb.style.transition = "transform 0.6s ease-in, opacity 0.6s ease-in";
-      requestAnimationFrame(() => {
-        crumb.style.transform = `translateY(${30 + Math.random() * 30}px)`;
-        crumb.style.opacity = "0";
+  function playNomSound() {
+    try {
+      const ctx = getSfxCtx();
+      const now = ctx.currentTime;
+      [0, 0.16].forEach((offset) => {
+        const bufferSize = Math.floor(ctx.sampleRate * 0.12);
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+        }
+        const noise = ctx.createBufferSource();
+        noise.buffer = buffer;
+        const filter = ctx.createBiquadFilter();
+        filter.type = "lowpass";
+        filter.frequency.setValueAtTime(1200, now + offset);
+        filter.frequency.exponentialRampToValueAtTime(280, now + offset + 0.12);
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.5, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.12);
+        noise.connect(filter).connect(gain).connect(ctx.destination);
+        noise.start(now + offset);
+        noise.stop(now + offset + 0.13);
       });
-      setTimeout(() => crumb.remove(), 700);
+    } catch (err) {
+      // Sin Web Audio disponible: seguimos sin sonido, no rompemos el mordisco.
     }
   }
 
-  // ---------- modal cómic ----------
+  // ---------- toast ----------
+
+  function showToast(msg) {
+    const toast = document.getElementById("toast");
+    toast.textContent = msg;
+    toast.classList.add("show");
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => toast.classList.remove("show"), 4200);
+  }
+
+  function setStatus(msg) {
+    document.getElementById("cake-status").textContent = msg;
+  }
+
+  // ---------- micrófono: detección real de soplido ----------
+
+  let micRequested = false;
+  let micEnabled = false;
+  let audioCtx = null;
+  let analyser = null;
+  let micDataArray = null;
+  let breathAboveSince = null;
+
+  async function ensureMic() {
+    if (micRequested) return micEnabled;
+    micRequested = true;
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showToast("Tu navegador no soporta el micrófono aquí: sopla con la barra espaciadora o el botón 🎤.");
+      return false;
+    }
+
+    showToast("Pedimos permiso al micrófono solo para detectar tu soplido 🌬️ — no se graba ni se guarda nada.");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new Ctx();
+      const source = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.6;
+      source.connect(analyser);
+      micDataArray = new Uint8Array(analyser.frequencyBinCount);
+      micEnabled = true;
+      requestAnimationFrame(micLoop);
+      return true;
+    } catch (err) {
+      showToast("Sin permiso de micrófono: puedes soplar igualmente con la barra espaciadora o el botón 🎤.");
+      micEnabled = false;
+      return false;
+    }
+  }
+
+  function micLoop() {
+    if (micEnabled && analyser) {
+      analyser.getByteTimeDomainData(micDataArray);
+      let sum = 0;
+      for (let i = 0; i < micDataArray.length; i++) {
+        const v = (micDataArray[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / micDataArray.length);
+
+      if (activeCandleId && !state[activeCandleId].blown) {
+        if (rms > BLOW_RMS_THRESHOLD) {
+          if (breathAboveSince === null) breathAboveSince = performance.now();
+          else if (performance.now() - breathAboveSince > BLOW_SUSTAIN_MS) {
+            breathAboveSince = null;
+            handleBlowSignal();
+          }
+        } else {
+          breathAboveSince = null;
+        }
+      }
+    }
+    requestAnimationFrame(micLoop);
+  }
+
+  // ---------- espacio / botón táctil: soplido alternativo ----------
+
+  let chargeTimer = null;
+
+  function startCharge() {
+    if (!activeCandleId || state[activeCandleId].blown || spinning) return;
+    if (chargeTimer) return;
+    chargeTimer = setTimeout(() => {
+      chargeTimer = null;
+      handleBlowSignal();
+    }, BLOW_SUSTAIN_MS);
+  }
+
+  function cancelCharge() {
+    if (chargeTimer) {
+      clearTimeout(chargeTimer);
+      chargeTimer = null;
+    }
+  }
+
+  function handleBlowSignal() {
+    if (!activeCandleId || state[activeCandleId].blown) return;
+    blowOutCandle(activeCandleId);
+  }
+
+  // ---------- velas ----------
+
+  function blowOutCandle(id) {
+    const s = state[id];
+    if (!s || s.blown) return;
+    s.blown = true;
+    breathAboveSince = null;
+    cancelCharge();
+
+    const wasActive = activeCandleId === id;
+    if (wasActive) activeCandleId = null;
+
+    cake.blowOutCandle(id);
+    updateLegend(id);
+    playSong(id);
+
+    const person = personById(id);
+    const remaining = CONFIG.people.filter((p) => !state[p.id].blown);
+
+    if (remaining.length === 0) {
+      allBlown = true;
+      enterBitePhase();
+    } else {
+      setStatus(`¡Vela de ${person.name} apagada! 🎶 Gira otra vez para la próxima vela.`);
+      setBlowUiVisible(false);
+      document.getElementById("spin-btn").disabled = false;
+    }
+  }
+
+  function setBlowUiVisible(visible) {
+    document.getElementById("blow-btn").hidden = !visible;
+    document.getElementById("cake-hint").hidden = !visible;
+  }
+
+  function armCandle(id) {
+    activeCandleId = id;
+    const person = personById(id);
+    setStatus(`¡Le toca a ${person.name}! Sopla su vela para apagarla.`);
+    setBlowUiVisible(true);
+    document.getElementById("spin-btn").disabled = true;
+    ensureMic();
+  }
+
+  async function onSpinClick() {
+    if (spinning || allBlown) return;
+    const excludeIds = CONFIG.people.filter((p) => state[p.id].blown).map((p) => p.id);
+    if (excludeIds.length >= CONFIG.people.length) return;
+
+    spinning = true;
+    cake.clearArmedHighlight();
+    document.getElementById("spin-btn").disabled = true;
+    setBlowUiVisible(false);
+    setStatus("🎡 Girando la tarta...");
+
+    const landedId = await cake.spinToRandom(excludeIds);
+    spinning = false;
+
+    if (!landedId) return; // no debería pasar: ya comprobamos candidatos arriba
+    armCandle(landedId);
+  }
+
+  // ---------- porciones: mordisco + cómic ----------
+
+  function enterBitePhase() {
+    setStatus("¡Todas las velas apagadas! Ahora toca cada porción para darle un mordisco 🍰");
+    document.getElementById("spin-btn").disabled = true;
+    document.getElementById("spin-btn").hidden = true;
+    setBlowUiVisible(false);
+    cake.setSlicesInteractive(true);
+  }
+
+  async function onSliceChosen(id) {
+    const s = state[id];
+    if (!allBlown || !s.blown || s.eaten) return;
+    s.eaten = true;
+
+    playNomSound();
+    await cake.biteSlice(id);
+    updateLegend(id);
+
+    const remaining = CONFIG.people.filter((p) => !state[p.id].eaten);
+    setStatus(
+      remaining.length === 0
+        ? "¡Feliz cumpleaños a los cuatro! 🎉🎂"
+        : "¡Ñam! Sigue mordiendo el resto de porciones."
+    );
+
+    openComic(id);
+  }
+
+  // ---------- modal cómic (idéntico al comportamiento anterior) ----------
 
   function openComic(id) {
-    modalPerson = CONFIG.people.find((p) => p.id === id);
+    modalPerson = personById(id);
     modalIndex = 0;
     document.getElementById("modal-title").textContent = `El cómic de ${modalPerson.name}`;
     renderModalPage();
@@ -360,14 +420,6 @@
     modalPerson = null;
   }
 
-  function showToast(msg) {
-    const toast = document.getElementById("toast");
-    toast.textContent = msg;
-    toast.classList.add("show");
-    clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => toast.classList.remove("show"), 4200);
-  }
-
   function bindModalControls() {
     document.getElementById("modal-close").addEventListener("click", closeComic);
     document.getElementById("modal-backdrop").addEventListener("click", closeComic);
@@ -382,9 +434,43 @@
     });
   }
 
+  // ---------- entrada: teclado y botón táctil de soplido ----------
+
+  function bindBlowControls() {
+    document.addEventListener("keydown", (e) => {
+      if (e.code === "Space" && !e.repeat) {
+        const tag = (e.target && e.target.tagName) || "";
+        if (tag === "BUTTON" || tag === "INPUT" || tag === "TEXTAREA") return;
+        e.preventDefault();
+        startCharge();
+      }
+    });
+    document.addEventListener("keyup", (e) => {
+      if (e.code === "Space") cancelCharge();
+    });
+
+    const blowBtn = document.getElementById("blow-btn");
+    blowBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); startCharge(); });
+    blowBtn.addEventListener("pointerup", cancelCharge);
+    blowBtn.addEventListener("pointercancel", cancelCharge);
+    blowBtn.addEventListener("pointerleave", cancelCharge);
+  }
+
+  // ---------- arranque ----------
+
   function init() {
     buildBackground();
-    buildCake();
+
+    const people = CONFIG.people;
+    CONFIG.people.forEach((p) => { state[p.id] = { blown: false, eaten: false }; });
+    renderLegend(displayNames(people));
+
+    const canvas = document.getElementById("cake-canvas");
+    cake = window.Cake3D.create({ canvas, people });
+    cake.onSliceClick(onSliceChosen);
+
+    document.getElementById("spin-btn").addEventListener("click", onSpinClick);
+    bindBlowControls();
     bindModalControls();
   }
 
