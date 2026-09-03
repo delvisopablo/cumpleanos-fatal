@@ -22,8 +22,8 @@
   const BITE_STEPS = 4;
   const PRODUCTION_SPIN_DURATION_MS = 7600;
   const SPIN_DURATION_MS = TEST_MODE ? 420 : REDUCED_MOTION ? 1500 : PRODUCTION_SPIN_DURATION_MS;
-  const CAMERA_IN_MS = TEST_MODE ? 70 : REDUCED_MOTION ? 220 : 900;
-  const CAMERA_RETURN_MS = TEST_MODE ? 90 : REDUCED_MOTION ? 240 : 850;
+  const CAMERA_RESET_MS = TEST_MODE ? 80 : REDUCED_MOTION ? 220 : 900;
+  const CAMERA_SHOULDER_MS = TEST_MODE ? 120 : REDUCED_MOTION ? 260 : 1100;
   const BLOW_DURATION_MS = TEST_MODE ? 40 : 680;
   const BITE_DURATION_MS = TEST_MODE ? 45 : 460;
   const TAU = Math.PI * 2;
@@ -51,6 +51,10 @@
 
   function rouletteEase(t) {
     return 1 - Math.pow(1 - t, 4.4);
+  }
+
+  function shortestAngleDelta(from, to) {
+    return ((to - from + Math.PI) % TAU + TAU) % TAU - Math.PI;
   }
 
   function setShadow(mesh, cast, receive) {
@@ -323,6 +327,8 @@
     return {
       chair,
       group,
+      card,
+      direction: direction.clone(),
       drinkType,
       hasLiquid: true,
       hasFoam: drinkType === "beer",
@@ -466,6 +472,201 @@
     group.scale.setScalar(options.scale || 1);
     group.userData.limbs = limbs;
     return group;
+  }
+
+  // Monigotes protagonistas: geometría low-poly separada de los NPC caminantes.
+  function createSmallGlasses(group, y, z, material, radius = 0.12) {
+    [-1, 1].forEach((side) => {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.025, 5, 14), material);
+      ring.position.set(side * (radius + 0.045), y, z);
+      group.add(ring);
+    });
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.025, 0.025), material);
+    bridge.position.set(0, y, z);
+    group.add(bridge);
+  }
+
+  function createSeatedPerson(person, index, chairPosition, outwardDirection) {
+    const profiles = {
+      hungryman: {
+        scale: 1.72,
+        width: 1.28,
+        torso: 0x6a2743,
+        skin: 0xc9825b,
+        hair: 0x171219,
+        headY: 2.12,
+        traits: ["oversized", "bald", "long-black-beard"],
+      },
+      dientes: {
+        scale: 0.96,
+        width: 1,
+        torso: 0x355f91,
+        skin: 0xe0a47c,
+        hair: 0x30231f,
+        headY: 1.92,
+        traits: ["round-glasses", "thin-moustache", "neck-length-thick-hair"],
+      },
+      daviles: {
+        scale: 0.98,
+        width: 1,
+        torso: 0xf7f5ed,
+        skin: 0xd89a72,
+        hair: 0x432c25,
+        headY: 1.92,
+        traits: ["full-beard", "short-hair", "pharmacist-coat", "orange-cat"],
+      },
+      carlos: {
+        scale: 0.68,
+        width: 0.92,
+        torso: 0x3f745f,
+        skin: 0xefc3a0,
+        hair: 0x32231f,
+        headY: 1.9,
+        traits: ["smallest", "trimmed-beard", "small-glasses", "neat-fringe"],
+      },
+    };
+    const profile = profiles[person.id] || profiles.dientes;
+    const root = new THREE.Group();
+    const skin = new THREE.MeshStandardMaterial({ color: profile.skin, roughness: 0.86 });
+    const clothes = new THREE.MeshStandardMaterial({ color: profile.torso, roughness: 0.82 });
+    const dark = new THREE.MeshStandardMaterial({ color: profile.hair, roughness: 0.93 });
+    const trousers = new THREE.MeshStandardMaterial({ color: 0x252331, roughness: 0.92 });
+    const glass = new THREE.MeshStandardMaterial({ color: 0x171822, metalness: 0.34, roughness: 0.42 });
+    const bodyRadius = 0.46 * profile.width;
+
+    const body = setShadow(
+      new THREE.Mesh(new THREE.CylinderGeometry(bodyRadius * 0.84, bodyRadius, 1.18, 7), clothes),
+      true,
+      true
+    );
+    body.position.y = 1.17;
+    root.add(body);
+
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.105, 0.2, 7), skin);
+    neck.position.y = 1.78;
+    root.add(neck);
+
+    const headRadius = person.id === "hungryman" ? 0.4 : 0.34;
+    const head = setShadow(new THREE.Mesh(new THREE.SphereGeometry(headRadius, 8, 6), skin), true, true);
+    head.position.y = profile.headY;
+    root.add(head);
+
+    [-1, 1].forEach((side) => {
+      const arm = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.1, 0.78, 6), clothes), true, true);
+      arm.position.set(side * bodyRadius * 0.92, 1.17, 0.16);
+      arm.rotation.x = -0.34;
+      arm.rotation.z = side * 0.08;
+      root.add(arm);
+
+      const thigh = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.13, 0.72, 6), trousers), true, true);
+      thigh.position.set(side * 0.2, 0.55, 0.34);
+      thigh.rotation.x = Math.PI / 2;
+      root.add(thigh);
+
+      const shin = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.115, 0.74, 6), trousers), true, true);
+      shin.position.set(side * 0.2, 0.2, 0.68);
+      root.add(shin);
+    });
+
+    const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x211921 });
+    [-1, 1].forEach((side) => {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.027, 6, 4), eyeMaterial);
+      eye.position.set(side * 0.12, profile.headY + 0.04, headRadius * 0.94);
+      root.add(eye);
+    });
+
+    if (person.id === "hungryman") {
+      const beardCrown = new THREE.Mesh(new THREE.SphereGeometry(0.38, 7, 5), dark);
+      beardCrown.scale.set(1.02, 0.72, 0.58);
+      beardCrown.position.set(0, profile.headY - 0.18, 0.28);
+      root.add(beardCrown);
+      const beard = setShadow(new THREE.Mesh(new THREE.ConeGeometry(0.4, 1.22, 7), dark), true, true);
+      beard.position.set(0, profile.headY - 0.67, 0.3);
+      beard.rotation.z = Math.PI;
+      root.add(beard);
+    } else {
+      const hair = new THREE.Mesh(new THREE.SphereGeometry(headRadius + 0.025, 8, 5, 0, TAU, 0, Math.PI * 0.52), dark);
+      hair.position.y = profile.headY + 0.08;
+      root.add(hair);
+    }
+
+    if (person.id === "dientes") {
+      const backHair = setShadow(new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.68, 0.25), dark), true, true);
+      backHair.position.set(0, profile.headY - 0.25, -0.22);
+      root.add(backHair);
+      createSmallGlasses(root, profile.headY + 0.04, 0.325, glass, 0.115);
+      [-1, 1].forEach((side) => {
+        const moustache = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.035, 0.055), dark);
+        moustache.position.set(side * 0.075, profile.headY - 0.1, 0.325);
+        moustache.rotation.z = side * 0.13;
+        root.add(moustache);
+      });
+    }
+
+    if (person.id === "daviles") {
+      const beard = new THREE.Mesh(new THREE.SphereGeometry(0.33, 8, 5), dark);
+      beard.scale.set(1.02, 0.72, 0.64);
+      beard.position.set(0, profile.headY - 0.18, 0.22);
+      root.add(beard);
+      const seam = new THREE.Mesh(
+        new THREE.BoxGeometry(0.035, 0.82, 0.025),
+        new THREE.MeshStandardMaterial({ color: 0xb8c4c7, roughness: 0.72 })
+      );
+      seam.position.set(0, 1.15, bodyRadius * 0.89);
+      root.add(seam);
+      const badge = new THREE.Mesh(
+        new THREE.BoxGeometry(0.19, 0.14, 0.025),
+        new THREE.MeshStandardMaterial({ color: 0x5aa6cb, roughness: 0.6 })
+      );
+      badge.position.set(0.23, 1.39, bodyRadius * 0.88);
+      root.add(badge);
+
+      const orange = new THREE.MeshStandardMaterial({ color: 0xe77f2f, roughness: 0.9 });
+      const cat = new THREE.Group();
+      const catBody = new THREE.Mesh(new THREE.SphereGeometry(0.19, 7, 5), orange);
+      catBody.scale.set(0.78, 1.25, 0.72);
+      cat.add(catBody);
+      const catHead = new THREE.Mesh(new THREE.SphereGeometry(0.15, 7, 5), orange);
+      catHead.position.set(0, 0.27, 0.03);
+      cat.add(catHead);
+      [-1, 1].forEach((side) => {
+        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.14, 4), orange);
+        ear.position.set(side * 0.08, 0.42, 0.02);
+        cat.add(ear);
+      });
+      cat.position.set(0.5, 1.72, 0.03);
+      cat.rotation.z = -0.16;
+      root.add(cat);
+    }
+
+    if (person.id === "carlos") {
+      createSmallGlasses(root, profile.headY + 0.04, 0.325, glass, 0.105);
+      const beard = new THREE.Mesh(new THREE.BoxGeometry(0.43, 0.13, 0.07), dark);
+      beard.position.set(0, profile.headY - 0.18, 0.31);
+      root.add(beard);
+      [-0.2, 0, 0.2].forEach((x, fringeIndex) => {
+        const fringe = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.16 + fringeIndex * 0.025, 0.13), dark);
+        fringe.position.set(x, profile.headY + 0.24, 0.27);
+        fringe.rotation.z = (1 - fringeIndex) * 0.09;
+        root.add(fringe);
+      });
+    }
+
+    root.scale.setScalar(profile.scale);
+    root.position.copy(chairPosition).addScaledVector(outwardDirection, person.id === "hungryman" ? 0.18 : 0);
+    root.position.y = 0.88;
+    root.rotation.y = Math.atan2(-outwardDirection.x, -outwardDirection.z);
+    root.userData.personId = person.id;
+
+    return {
+      id: person.id,
+      index,
+      mesh: root,
+      scale: profile.scale,
+      traits: profile.traits,
+      headWorldY: root.position.y + profile.headY * profile.scale,
+      chairPosition: chairPosition.clone(),
+    };
   }
 
   function createCrowd(scene) {
@@ -836,16 +1037,22 @@
 
     const step = 360 / people.length;
     const placeSettings = [];
+    const seatedPeople = new Map();
     people.forEach((person, index) => {
       const angleMid = index * step + step / 2 + ANGLE_OFFSET;
       const setting = createPlaceSetting(person, index, angleMid);
+      const seated = createSeatedPerson(person, index, setting.chairPosition, setting.direction);
       scene.add(setting.chair);
       scene.add(setting.group);
+      scene.add(seated.mesh);
+      seatedPeople.set(person.id, seated);
       placeSettings.push({
         id: person.id,
+        seatAzimuth: Math.atan2(setting.chairPosition.x, setting.chairPosition.z),
         drinkType: setting.drinkType,
         hasLiquid: setting.hasLiquid,
         hasFoam: setting.hasFoam,
+        card: setting.card,
         chairPosition: setting.chairPosition,
         platePosition: setting.platePosition,
       });
@@ -862,6 +1069,10 @@
     let maxCameraFocus = 0;
     let minimumCameraRadius = cameraPose.radius;
     let cameraAuto = false;
+    let cameraMode = "overview";
+    let focusedPersonId = null;
+    let lastSpinTrace = [];
+    let lastAlignment = null;
 
     let spinning = false;
     let armedId = null;
@@ -981,7 +1192,7 @@
         : { radius: Math.hypot(11.1, 12.4), height: 8.15, azimuth: Math.atan2(11.1, 12.4) };
       overviewPose.radius = nextOverview.radius;
       overviewPose.height = nextOverview.height;
-      if (!cameraAuto && !spinning) {
+      if (!cameraAuto && !spinning && cameraMode === "overview") {
         cameraPose.radius = overviewPose.radius;
         cameraPose.height = overviewPose.height;
         if (!Number.isFinite(cameraPose.azimuth)) cameraPose.azimuth = nextOverview.azimuth;
@@ -1037,9 +1248,7 @@
       const deltaTime = Math.min(clock.getDelta(), 0.05);
       elapsed += deltaTime;
 
-      if (!spinning) {
-        spinGroup.rotation.y = baseRotationY + (REDUCED_MOTION ? 0 : 0.045 * Math.sin(elapsed * 0.62));
-      }
+      if (!spinning) spinGroup.rotation.y = baseRotationY;
       if (!REDUCED_MOTION) {
         cakeRoot.rotation.x = 0.012 * Math.sin(elapsed * 0.74);
         cakeRoot.rotation.z = 0.016 * Math.cos(elapsed * 0.61);
@@ -1084,7 +1293,7 @@
       for (let i = activeTweens.length - 1; i >= 0; i--) {
         const tween = activeTweens[i];
         const progress = Math.min(1, (performance.now() - tween.start) / tween.duration);
-        tween.onUpdate(tween.ease(progress));
+        tween.onUpdate(tween.ease(progress), progress);
         if (progress >= 1) {
           activeTweens.splice(i, 1);
           tween.onComplete();
@@ -1105,13 +1314,19 @@
       if (candidates.length === 0) return null;
 
       spinning = true;
+      placeSettings.forEach((placeSetting) => { placeSetting.card.visible = true; });
       cameraAuto = true;
+      cameraMode = "transition";
+      focusedPersonId = null;
       armedId = null;
       maxCameraFocus = 0;
       const target = candidates[Math.floor(Math.random() * candidates.length)];
       const candle = candles.get(target.id);
+      const setting = placeSettings.find((candidate) => candidate.id === target.id);
+      const seated = seatedPeople.get(target.id);
       const localAngle = degToRad(candle.angleMid);
-      const desiredRotation = cameraPose.azimuth - localAngle;
+      const seatAzimuth = setting.seatAzimuth;
+      const desiredRotation = seatAzimuth - localAngle;
       const currentRotation = spinGroup.rotation.y;
       const delta = ((desiredRotation - currentRotation) % TAU + TAU) % TAU;
       const extraTurns = TEST_MODE ? 2 : 8 + Math.floor(Math.random() * 3);
@@ -1119,58 +1334,82 @@
 
       const startPose = { ...cameraPose };
       minimumCameraRadius = startPose.radius;
-      const generalPose = {
+      const roulettePose = {
         radius: overviewPose.radius,
         height: overviewPose.height,
         azimuth: startPose.azimuth,
         targetY: overviewPose.targetY,
       };
-      const closePose = {
-        radius: startPose.radius * 0.84,
-        height: startPose.height * 0.91,
-        azimuth: startPose.azimuth,
-        targetY: TABLE_SURFACE_Y + 0.78,
+      const shoulderSide = seated.index % 2 === 0 ? 1 : -1;
+      const shoulderDistance = seated.id === "hungryman"
+        ? 2.85
+        : 1.35 + seated.scale * 0.42;
+      const shoulderOffset = seated.id === "hungryman" ? 0.12 : 0.075;
+      const shoulderPose = {
+        radius: Math.hypot(seated.mesh.position.x, seated.mesh.position.z) + shoulderDistance,
+        height: seated.headWorldY + 0.18,
+        azimuth: seatAzimuth + shoulderSide * shoulderOffset,
+        targetY: TABLE_SURFACE_Y + CAKE_HEIGHT * 0.78,
       };
-      const zoomIn = addTween({
-        duration: CAMERA_IN_MS,
-        ease: easeOutCubic,
+      const resetCamera = addTween({
+        duration: CAMERA_RESET_MS,
+        ease: easeInOutCubic,
         onUpdate: (progress) => {
           cameraFocus = progress;
           maxCameraFocus = Math.max(maxCameraFocus, cameraFocus);
-          cameraPose.radius = startPose.radius + (closePose.radius - startPose.radius) * progress;
+          cameraPose.radius = startPose.radius + (roulettePose.radius - startPose.radius) * progress;
           minimumCameraRadius = Math.min(minimumCameraRadius, cameraPose.radius);
-          cameraPose.height = startPose.height + (closePose.height - startPose.height) * progress;
-          cameraPose.targetY = startPose.targetY + (closePose.targetY - startPose.targetY) * progress;
+          cameraPose.height = startPose.height + (roulettePose.height - startPose.height) * progress;
+          cameraPose.targetY = startPose.targetY + (roulettePose.targetY - startPose.targetY) * progress;
         },
       });
+      lastSpinTrace = [{ progress: 0, easedProgress: 0, rotation: currentRotation }];
       const spin = addTween({
         duration: SPIN_DURATION_MS,
         ease: rouletteEase,
-        onUpdate: (progress) => { spinGroup.rotation.y = currentRotation + (finalRotation - currentRotation) * progress; },
+        onUpdate: (progress, linearProgress) => {
+          spinGroup.rotation.y = currentRotation + (finalRotation - currentRotation) * progress;
+          const lastSample = lastSpinTrace[lastSpinTrace.length - 1];
+          if (linearProgress >= 1 || linearProgress - lastSample.progress >= 0.075) {
+            lastSpinTrace.push({ progress: linearProgress, easedProgress: progress, rotation: spinGroup.rotation.y });
+          }
+        },
       });
 
-      await Promise.all([zoomIn, spin]);
+      await Promise.all([resetCamera, spin]);
       baseRotationY = ((finalRotation % TAU) + TAU) % TAU;
       spinGroup.rotation.y = baseRotationY;
+      const worldQuadrantAngle = ((localAngle + baseRotationY) % TAU + TAU) % TAU;
+      lastAlignment = {
+        id: target.id,
+        quadrantWorldAngle: worldQuadrantAngle,
+        seatAzimuth,
+        error: Math.abs(shortestAngleDelta(worldQuadrantAngle, seatAzimuth)),
+      };
+      setting.card.visible = false;
 
-      const returnStart = { ...cameraPose };
+      const shoulderStart = { ...cameraPose };
+      const shoulderAngleDelta = shortestAngleDelta(shoulderStart.azimuth, shoulderPose.azimuth);
       await addTween({
-        duration: CAMERA_RETURN_MS,
+        duration: CAMERA_SHOULDER_MS,
         ease: easeInOutCubic,
         onUpdate: (progress) => {
-          cameraPose.radius = returnStart.radius + (generalPose.radius - returnStart.radius) * progress;
-          cameraPose.height = returnStart.height + (generalPose.height - returnStart.height) * progress;
-          cameraPose.targetY = returnStart.targetY + (generalPose.targetY - returnStart.targetY) * progress;
-          cameraFocus = 1 - progress;
+          cameraPose.radius = shoulderStart.radius + (shoulderPose.radius - shoulderStart.radius) * progress;
+          cameraPose.height = shoulderStart.height + (shoulderPose.height - shoulderStart.height) * progress;
+          cameraPose.azimuth = shoulderStart.azimuth + shoulderAngleDelta * progress;
+          cameraPose.targetY = shoulderStart.targetY + (shoulderPose.targetY - shoulderStart.targetY) * progress;
+          cameraFocus = progress;
         },
         onComplete: () => {
-          Object.assign(cameraPose, generalPose);
-          cameraFocus = 0;
+          Object.assign(cameraPose, shoulderPose);
+          cameraFocus = 1;
         },
       });
 
       spinning = false;
       cameraAuto = false;
+      cameraMode = "shoulder";
+      focusedPersonId = target.id;
       armedId = target.id;
       return target.id;
     }
@@ -1253,6 +1492,7 @@
 
     function setSlicesInteractive(value) {
       interactive = Boolean(value);
+      if (interactive) placeSettings.forEach((setting) => { setting.card.visible = true; });
       canvas.classList.toggle("is-biteable", interactive);
     }
 
@@ -1309,6 +1549,7 @@
       dragLastX = event.clientX;
       dragDistance += Math.abs(deltaX);
       cameraPose.azimuth -= deltaX * 0.0062;
+      cameraMode = "free";
       if (Math.abs(deltaX) > 0) manualDragCount += 1;
     }
 
@@ -1324,6 +1565,7 @@
     function testDragBy(deltaX) {
       if (spinning || cameraAuto || !Number.isFinite(deltaX)) return false;
       cameraPose.azimuth -= deltaX * 0.0062;
+      cameraMode = "free";
       manualDragCount += 1;
       return true;
     }
@@ -1344,22 +1586,41 @@
         cameraFocus,
         maxCameraFocus,
         cameraAuto,
+        cameraMode,
+        focusedPersonId,
         cameraPose: { ...cameraPose },
         overviewPose: { ...overviewPose },
         minimumCameraRadius,
         manualDragCount,
         productionSpinDurationMs: PRODUCTION_SPIN_DURATION_MS,
         spinDurationMs: SPIN_DURATION_MS,
+        lastSpinTrace: lastSpinTrace.map((sample) => ({ ...sample })),
+        lastAlignment: lastAlignment ? { ...lastAlignment } : null,
         cakeProfile: { ...cakeProfile },
         sliceState,
         placeSettings: placeSettings.map((setting) => ({
           id: setting.id,
+          seatAzimuth: setting.seatAzimuth,
           drinkType: setting.drinkType,
           hasLiquid: setting.hasLiquid,
           hasFoam: setting.hasFoam,
           chairPosition: { x: setting.chairPosition.x, y: setting.chairPosition.y, z: setting.chairPosition.z },
           platePosition: { x: setting.platePosition.x, y: setting.platePosition.y, z: setting.platePosition.z },
         })),
+        seatedPeople: [...seatedPeople.values()].map((seated) => {
+          const facing = new THREE.Vector3(0, 0, 1).applyQuaternion(seated.mesh.quaternion).setY(0).normalize();
+          const towardCake = new THREE.Vector3(-seated.mesh.position.x, 0, -seated.mesh.position.z).normalize();
+          return {
+            id: seated.id,
+            scale: seated.scale,
+            traits: [...seated.traits],
+            headWorldY: seated.headWorldY,
+            position: { x: seated.mesh.position.x, y: seated.mesh.position.y, z: seated.mesh.position.z },
+            chairPosition: { x: seated.chairPosition.x, y: seated.chairPosition.y, z: seated.chairPosition.z },
+            facingCakeDot: facing.dot(towardCake),
+            screenPosition: npcScreenPosition(seated, 1.45),
+          };
+        }),
         walkers: walkers.map((walker) => ({
           id: walker.id,
           name: walker.name,

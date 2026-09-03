@@ -2,8 +2,8 @@
   CONFIGURACIÓN DEL CUMPLE
   ========================
   Aquí es donde editas los nombres, colores, canciones, letras, fotos y
-  cómics de cada
-  persona. No hace falta tocar el resto del código.
+  cómics de cada persona y el cómic final del grupo. No hace falta tocar el
+  resto del código.
 
   Para cada persona:
     id     -> identificador corto, sin espacios ni acentos (se usa para
@@ -20,6 +20,9 @@
               varias páginas. Súbelas a assets/comics/<id>/ con esos
               nombres. Si la lista está vacía, se mostrará un aviso de
               "cómic en camino" hasta que añadas las imágenes aquí.
+
+  groupComic.comics -> páginas de la historia conjunta. Súbelas a
+              assets/comics/group/ y añade sus rutas en orden.
 
   CÓMO AÑADIR LA CANCIÓN DE ALGUIEN:
     1. Sube el mp3 a assets/audio/ (por ejemplo assets/audio/carlos.mp3).
@@ -38,20 +41,20 @@
 const CONFIG = {
   people: [
     {
-      id: "geido",
-      name: "Geido Senchaz",
+      id: "hungryman",
+      name: "Hungryman",
       color: "#ff5d8f",
-      audio: "assets/audio/geido.mp3",
-      lyrics: "assets/lyrics/geido.txt",
+      audio: "assets/audio/hungryman.mp3",
+      lyrics: "assets/lyrics/hungryman.txt",
       songPhotos: [],
       comics: []
     },
     {
-      id: "diego-s2",
-      name: "Diego Sánchez (2)",
+      id: "dientes",
+      name: "Dientes",
       color: "#4fb6ff",
-      audio: "assets/audio/diego-s2.mp3",
-      lyrics: "assets/lyrics/diego-s2.txt",
+      audio: "assets/audio/dientes.mp3",
+      lyrics: "assets/lyrics/dientes.txt",
       songPhotos: [],
       comics: []
     },
@@ -73,7 +76,10 @@ const CONFIG = {
       songPhotos: [],
       comics: []
     }
-  ]
+  ],
+  groupComic: {
+    comics: []
+  }
 };
 
 // Se expone explícitamente en window para que cake3d.js, script.js y las

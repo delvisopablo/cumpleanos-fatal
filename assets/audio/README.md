@@ -3,8 +3,8 @@
 Sube aquí el archivo `.mp3` de la canción de cada persona, con el mismo
 nombre que aparece en el campo `audio` de `js/config.js`:
 
-- `geido.mp3`
-- `diego-s2.mp3`
+- `hungryman.mp3`
+- `dientes.mp3`
 - `carlos.mp3`
 - `daviles.mp3`
 

@@ -14,8 +14,8 @@
   const AUDIO_LOAD_TIMEOUT_MS = TEST_MODE ? 350 : 5500;
   const BITE_STEPS = global.Cake3D ? global.Cake3D.BITE_STEPS : 4;
   const PERSON_PAGES = {
-    geido: "personas/geido-senchaz.html",
-    "diego-s2": "personas/diego-sanchez-2.html",
+    hungryman: "personas/hungryman.html",
+    dientes: "personas/dientes.html",
     carlos: "personas/carlos-conde.html",
     daviles: "personas/daviles.html",
   };
@@ -31,8 +31,11 @@
   let songExperienceRun = null;
 
   let modalPerson = null;
+  let modalKind = null;
   let modalIndex = 0;
   let modalReturnFocus = null;
+  const viewedComicIds = new Set();
+  let groupComicUnlocked = false;
 
   function displayNames(people) {
     if (people.every((person) => person.displayName)) {
@@ -575,7 +578,7 @@
     spinning = true;
     cake.clearArmedHighlight();
     setBlowUiVisible(false);
-    setStatus("La tarta gira despacio… la cámara se acerca solo un poco y vuelve a la vista general.");
+    setStatus("La tarta gira a toda velocidad… ¿hacia quién apuntará al frenar?");
     updateAllLegend();
     updateSpinButton();
 
@@ -633,6 +636,7 @@
 
   function openComic(id) {
     modalPerson = personById(id);
+    modalKind = "individual";
     modalIndex = 0;
     modalReturnFocus = document.activeElement;
     document.getElementById("modal-title").textContent = `El cómic de ${modalPerson.displayName || modalPerson.name}`;
@@ -640,6 +644,34 @@
     const modal = document.getElementById("comic-modal");
     modal.classList.remove("hidden");
     document.getElementById("modal-close").focus();
+    viewedComicIds.add(id);
+    if (viewedComicIds.size === CONFIG.people.length) unlockGroupComic();
+  }
+
+  function unlockGroupComic() {
+    if (groupComicUnlocked) return;
+    groupComicUnlocked = true;
+    document.getElementById("group-comic-btn").hidden = false;
+    showToast("📚 ¡Cómic final desbloqueado! La historia conjunta ya está disponible.");
+  }
+
+  function openGroupComic() {
+    if (!groupComicUnlocked) return false;
+    modalPerson = {
+      id: "group",
+      name: "los cuatro",
+      comics: Array.isArray(CONFIG.groupComic && CONFIG.groupComic.comics)
+        ? CONFIG.groupComic.comics
+        : [],
+    };
+    modalKind = "group";
+    modalIndex = 0;
+    modalReturnFocus = document.activeElement;
+    document.getElementById("modal-title").textContent = "Cómic final · La historia conjunta";
+    renderModalPage();
+    document.getElementById("comic-modal").classList.remove("hidden");
+    document.getElementById("modal-close").focus();
+    return true;
   }
 
   function renderModalPage() {
@@ -652,11 +684,15 @@
     if (comics.length === 0) {
       const placeholder = document.createElement("div");
       placeholder.className = "comic-placeholder";
-      placeholder.innerHTML = `
-        <span class="big-emoji" aria-hidden="true">📔✨</span>
-        <p>El cómic de <strong>${modalPerson.displayName || modalPerson.name}</strong> está de camino.</p>
-        <p>Se mostrará aquí cuando subas sus imágenes a<br>
-        <code>assets/comics/${modalPerson.id}/</code> y las añadas en <code>js/config.js</code>.</p>`;
+      placeholder.innerHTML = modalKind === "group"
+        ? `<span class="big-emoji" aria-hidden="true">📚✨</span>
+          <p>El <strong>cómic final de los cuatro</strong> está de camino.</p>
+          <p>Se mostrará aquí cuando subas sus imágenes a<br>
+          <code>assets/comics/group/</code> y las añadas en <code>CONFIG.groupComic.comics</code>.</p>`
+        : `<span class="big-emoji" aria-hidden="true">📔✨</span>
+          <p>El cómic de <strong>${modalPerson.displayName || modalPerson.name}</strong> está de camino.</p>
+          <p>Se mostrará aquí cuando subas sus imágenes a<br>
+          <code>assets/comics/${modalPerson.id}/</code> y las añadas en <code>js/config.js</code>.</p>`;
       gallery.appendChild(placeholder);
       navigation.classList.add("single-page");
       counter.textContent = "";
@@ -665,7 +701,9 @@
 
     const image = document.createElement("img");
     image.src = comics[modalIndex];
-    image.alt = `Página ${modalIndex + 1} del cómic de ${modalPerson.displayName || modalPerson.name}`;
+    image.alt = modalKind === "group"
+      ? `Página ${modalIndex + 1} del cómic final de los cuatro`
+      : `Página ${modalIndex + 1} del cómic de ${modalPerson.displayName || modalPerson.name}`;
     image.onerror = () => {
       gallery.innerHTML = `
         <div class="comic-placeholder">
@@ -687,6 +725,7 @@
     if (modal.classList.contains("hidden")) return;
     modal.classList.add("hidden");
     modalPerson = null;
+    modalKind = null;
     if (modalReturnFocus && typeof modalReturnFocus.focus === "function") modalReturnFocus.focus();
   }
 
@@ -708,6 +747,7 @@
         renderModalPage();
       }
     });
+    document.getElementById("group-comic-btn").addEventListener("click", openGroupComic);
   }
 
   function bindBlowControls() {
@@ -733,6 +773,7 @@
       dragCamera: (deltaX) => cake && cake.testDragBy(deltaX),
       previewSong: previewSongForTest,
       talkToNpc: (id) => cake && cake.talkToNpc(id),
+      openGroupComic,
       closeComic,
       getState() {
         const peopleState = {};
@@ -744,6 +785,15 @@
           allBlown,
           nomSoundCount,
           modalOpen: !document.getElementById("comic-modal").classList.contains("hidden"),
+          modalKind,
+          viewedComicIds: [...viewedComicIds],
+          groupComic: {
+            unlocked: groupComicUnlocked,
+            buttonVisible: !document.getElementById("group-comic-btn").hidden,
+            configuredPages: Array.isArray(CONFIG.groupComic && CONFIG.groupComic.comics)
+              ? CONFIG.groupComic.comics.length
+              : 0,
+          },
           songExperience: {
             visible: !document.getElementById("song-experience").classList.contains("hidden"),
             title: document.getElementById("lyrics-title").textContent,

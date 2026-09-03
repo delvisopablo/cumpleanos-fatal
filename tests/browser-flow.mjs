@@ -13,9 +13,9 @@ const productionUrlObject = new URL(siteUrl);
 productionUrlObject.searchParams.delete("test");
 productionUrlObject.searchParams.set("verifySpin", String(runId));
 const productionUrl = productionUrlObject.href;
-const geidoPageUrlObject = new URL("personas/geido-senchaz.html", siteUrl);
-geidoPageUrlObject.searchParams.set("routeTest", String(runId));
-const geidoPageUrl = geidoPageUrlObject.href;
+const hungrymanPageUrlObject = new URL("personas/hungryman.html", siteUrl);
+hungrymanPageUrlObject.searchParams.set("routeTest", String(runId));
+const hungrymanPageUrl = hungrymanPageUrlObject.href;
 const carlosPageUrlObject = new URL("personas/carlos-conde.html", siteUrl);
 carlosPageUrlObject.searchParams.set("routeTest", String(runId));
 const carlosPageUrl = carlosPageUrlObject.href;
@@ -26,6 +26,11 @@ function assert(condition, message) {
 
 function closeEnough(first, second, tolerance = 0.03) {
   return Math.abs(first - second) <= tolerance;
+}
+
+function angleDistance(first, second) {
+  const tau = Math.PI * 2;
+  return Math.abs(((second - first + Math.PI) % tau + tau) % tau - Math.PI);
 }
 
 async function waitFor(check, message, timeoutMs = 15000) {
@@ -132,6 +137,7 @@ const initialUi = await evaluate(`(() => {
     socialImage: document.querySelector('meta[property="og:image"]')?.content,
     configKeys: CONFIG.people.map((person) => Object.keys(person).sort()),
     configNames: CONFIG.people.map((person) => person.name),
+    groupComicKeys: Object.keys(CONFIG.groupComic || {}).sort(),
   };
 })()`);
 assert(initialUi.textLength > 80, "La página se ha renderizado vacía");
@@ -139,10 +145,10 @@ assert(initialUi.fallbackHidden, "Se mostró el fallback en vez de la escena 3D"
 assert(initialUi.canvas.width >= 1000 && initialUi.canvas.height >= 700, "El canvas no ocupa la escena");
 assert(initialUi.dockBottom === 800, "La barra de personas no está fijada abajo");
 assert(initialUi.chipCount === 4, "No aparecen las cuatro personas");
-assert(initialUi.chipNames[0] === "Geido Senchaz", "El nombre de Geido no aparece en la mesa");
-assert(initialUi.firstLink === "personas/geido-senchaz.html", "La página individual de Geido no está enlazada");
-assert(initialUi.description.includes("Geido"), "Los metadatos principales no incluyen a Geido");
-assert(initialUi.socialImage.endsWith("/public/og.png"), "La tarjeta social no está enlazada");
+assert(initialUi.chipNames[0] === "Hungryman", "El nombre de Hungryman no aparece en la mesa");
+assert(initialUi.firstLink === "personas/hungryman.html", "La página individual de Hungryman no está enlazada");
+assert(initialUi.description.includes("Hungryman"), "Los metadatos principales no incluyen a Hungryman");
+assert(initialUi.socialImage.endsWith("/public/og-v2.png"), "La tarjeta social nueva no está enlazada");
 assert(!initialUi.buttonDisabled, "La ruleta empieza bloqueada");
 const expectedConfigKeys = ["audio", "color", "comics", "id", "lyrics", "name", "songPhotos"];
 assert(
@@ -150,9 +156,10 @@ assert(
   "config.js no conserva exactamente {id,name,color,audio,lyrics,songPhotos,comics}"
 );
 assert(
-  JSON.stringify(initialUi.configNames) === JSON.stringify(["Geido Senchaz", "Diego Sánchez (2)", "Carlos Conde", "Daviles"]),
+  JSON.stringify(initialUi.configNames) === JSON.stringify(["Hungryman", "Dientes", "Carlos Conde", "Daviles"]),
   "Los nombres de las cuatro personas no son los esperados"
 );
+assert(JSON.stringify(initialUi.groupComicKeys) === JSON.stringify(["comics"]), "Falta CONFIG.groupComic.comics");
 
 const screenshot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
 await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
@@ -190,6 +197,29 @@ assert(
 );
 assert(sceneState.walkers.every((walker) => walker.phraseCount >= 3), "Algún NPC no recibió sus frases JSON");
 assert(sceneState.walkers.every((walker) => !walker.intersectsFurniture), "Un invitado atraviesa la mesa o una silla");
+assert(sceneState.seatedPeople.length === 4, "No hay un monigote sentado por persona");
+assert(
+  JSON.stringify(sceneState.seatedPeople.map((person) => person.id)) ===
+    JSON.stringify(["hungryman", "dientes", "carlos", "daviles"]),
+  "Los cuatro monigotes no corresponden a las personas configuradas"
+);
+assert(sceneState.seatedPeople.every((person) => person.facingCakeDot > 0.995), "Algún monigote no mira hacia la tarta");
+assert(sceneState.seatedPeople.every((person) => (
+  Math.hypot(person.position.x - person.chairPosition.x, person.position.z - person.chairPosition.z) < 0.25
+)), "Algún monigote no está colocado en su silla");
+const seatedById = Object.fromEntries(sceneState.seatedPeople.map((person) => [person.id, person]));
+assert(
+  seatedById.hungryman.scale > Math.max(seatedById.dientes.scale, seatedById.daviles.scale) * 1.5 &&
+    seatedById.hungryman.scale > seatedById.carlos.scale * 2,
+  "Hungryman no es exageradamente más grande que los demás"
+);
+assert(seatedById.carlos.scale < Math.min(seatedById.dientes.scale, seatedById.daviles.scale), "Carlos no es el más pequeño");
+assert(["oversized", "bald", "long-black-beard"].every((trait) => seatedById.hungryman.traits.includes(trait)), "Falta la pinta de Hungryman");
+assert(["round-glasses", "thin-moustache", "neck-length-thick-hair"].every((trait) => seatedById.dientes.traits.includes(trait)), "Falta la pinta de Dientes");
+assert(["full-beard", "short-hair", "pharmacist-coat", "orange-cat"].every((trait) => seatedById.daviles.traits.includes(trait)), "Falta la pinta de Daviles");
+assert(["trimmed-beard", "small-glasses", "neat-fringe"].every((trait) => seatedById.carlos.traits.includes(trait)), "Falta la pinta de Carlos");
+assert(!loadedState.groupComic.unlocked && !loadedState.groupComic.buttonVisible, "El cómic final aparece antes de ver los individuales");
+assert(await evaluate("window.__birthdayTest.openGroupComic()") === false, "El cómic final se puede abrir antes de desbloquearlo");
 assert(closeEnough(sceneState.cameraPose.radius, sceneState.overviewPose.radius), "La cámara inicial no usa la vista general");
 assert(closeEnough(sceneState.cameraPose.height, sceneState.overviewPose.height), "La altura inicial no muestra la mesa desde fuera");
 
@@ -286,22 +316,47 @@ assert(crawlSamples.some((sample) => sample.photoIndex === 1), "El carrusel no a
 await evaluate("window.__songPreview");
 assert(!(await state()).songExperience.visible, "La cortinilla no se ocultó al terminar la canción");
 
-// Primera ronda: giro real, vuelta al encuadre general y botón mantenido.
-const overviewBeforeSpin = (await state()).scene.cameraPose;
+// Primera ronda: aceleración inicial, frenado progresivo, alineación exacta y plano sobre el hombro.
 await evaluate("document.getElementById('spin-btn').click()");
 const dragDuringAutomaticMove = await evaluate("window.__birthdayTest.dragCamera(80)");
 assert(dragDuringAutomaticMove === false, "El arrastre interrumpió el movimiento automático de cámara");
 const firstId = await waitFor(async () => (await state()).activeCandleId, "La ruleta no eligió una vela");
 const afterFirstSpin = await state();
 assert(afterFirstSpin.scene.maxCameraFocus > 0.9, "La cámara no se acercó durante la ruleta");
-const zoomRatio = afterFirstSpin.scene.minimumCameraRadius / overviewBeforeSpin.radius;
-assert(zoomRatio >= 0.82 && zoomRatio <= 0.87, `El zoom no fue moderado: ${zoomRatio.toFixed(2)}`);
-assert(closeEnough(afterFirstSpin.scene.cameraPose.radius, afterFirstSpin.scene.overviewPose.radius), "La cámara no volvió a la distancia general");
-assert(closeEnough(afterFirstSpin.scene.cameraPose.height, afterFirstSpin.scene.overviewPose.height), "La cámara no volvió a la altura general");
-assert(closeEnough(afterFirstSpin.scene.cameraPose.azimuth, overviewBeforeSpin.azimuth), "La ruleta perdió el ángulo elegido por el usuario");
+assert(afterFirstSpin.scene.cameraMode === "shoulder", "La cámara no terminó en el plano sobre el hombro");
+assert(afterFirstSpin.scene.focusedPersonId === firstId, "La cámara no se colocó detrás de la persona elegida");
+assert(afterFirstSpin.scene.lastAlignment?.id === firstId, "La alineación no pertenece a la persona elegida");
+assert(afterFirstSpin.scene.lastAlignment.error < 1e-7, "La porción elegida no apunta exactamente a su persona");
+const selectedSetting = afterFirstSpin.scene.placeSettings.find((setting) => setting.id === firstId);
+const selectedPerson = afterFirstSpin.scene.seatedPeople.find((person) => person.id === firstId);
+const selectedChairRadius = Math.hypot(selectedSetting.chairPosition.x, selectedSetting.chairPosition.z);
+assert(afterFirstSpin.scene.cameraPose.radius > selectedChairRadius + 1, "La cámara no quedó detrás de la silla");
+assert(afterFirstSpin.scene.cameraPose.height > selectedPerson.headWorldY, "La cámara no mira por encima del hombro");
+assert(angleDistance(afterFirstSpin.scene.cameraPose.azimuth, selectedSetting.seatAzimuth) < 0.13, "La cámara no quedó alineada con la silla");
+const spinTrace = afterFirstSpin.scene.lastSpinTrace;
+assert(spinTrace.length >= 8, "No hay suficientes muestras para comprobar el frenado de la ruleta");
+const spinSpeeds = spinTrace.slice(1).map((sample, index) => {
+  const previous = spinTrace[index];
+  return Math.abs(sample.rotation - previous.rotation) / (sample.progress - previous.progress);
+});
+assert(spinSpeeds[0] > spinSpeeds.at(-1) * 8, "La ruleta no empieza mucho más rápido de lo que termina");
+assert(
+  spinSpeeds.slice(1).every((speed, index) => speed <= spinSpeeds[index] * 1.03),
+  "La ruleta no decelera de forma progresiva"
+);
 const spinScreenshot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
 await writeFile(spinScreenshotPath, Buffer.from(spinScreenshot.data, "base64"));
-assert(await evaluate("window.__birthdayTest.dragCamera(-35)"), "La cámara no volvió a responder tras el giro");
+const shoulderAzimuth = afterFirstSpin.scene.cameraPose.azimuth;
+assert(await evaluate("window.__birthdayTest.dragCamera(-60)"), "La cámara no volvió a responder tras el giro");
+const afterShoulderDrag = await state();
+assert(angleDistance(afterShoulderDrag.scene.cameraPose.azimuth, shoulderAzimuth) > 0.3, "La cámara no orbitó desde el plano sobre el hombro");
+assert(afterShoulderDrag.scene.cameraMode === "free", "La cámara no pasó a control libre tras arrastrar");
+assert(afterShoulderDrag.activeCandleId === firstId, "Girar la cámara cambió la vela activa");
+const postSpinNpc = afterShoulderDrag.scene.walkers.find((walker) => walker.screenPosition.visible);
+assert(postSpinNpc, "No queda ningún NPC accesible desde la cámara libre");
+const postSpinTalk = await evaluate(`window.__birthdayTest.talkToNpc(${JSON.stringify(postSpinNpc.id)})`);
+assert(postSpinTalk?.speaking, "Los NPC dejaron de responder después del plano sobre el hombro");
+await evaluate(`window.__birthdayTest.talkToNpc(${JSON.stringify(postSpinNpc.id)})`);
 const blockedByActiveRound = await evaluate("window.__birthdayTest.spin()");
 assert(blockedByActiveRound === null, "La ruleta permitió saltarse una vela activa");
 
@@ -335,6 +390,14 @@ for (let round = 1; round < 4; round++) {
   const selectedId = await evaluate("window.__birthdayTest.spin()");
   assert(selectedId && !chosenIds.includes(selectedId), "La ruleta repitió una porción ya completada");
   chosenIds.push(selectedId);
+  const roundState = await state();
+  assert(roundState.scene.cameraMode === "shoulder" && roundState.scene.focusedPersonId === selectedId, "La cámara no siguió a la persona de la nueva ronda");
+  assert(roundState.scene.lastAlignment?.id === selectedId && roundState.scene.lastAlignment.error < 1e-7, "Una porción posterior no quedó alineada con su persona");
+  const roundSpeeds = roundState.scene.lastSpinTrace.slice(1).map((sample, index) => {
+    const previous = roundState.scene.lastSpinTrace[index];
+    return Math.abs(sample.rotation - previous.rotation) / (sample.progress - previous.progress);
+  });
+  assert(roundSpeeds[0] > roundSpeeds.at(-1) * 8, "Una tirada posterior no frenó progresivamente");
 
   const result = await evaluate(`(async () => {
     const test = window.__birthdayTest;
@@ -356,7 +419,9 @@ assert(new Set(chosenIds).size === 4, "La ruleta no eligió cuatro personas dist
 assert(afterCandles.allBlown, "No se activó la fase de mordiscos tras las cuatro velas");
 assert(afterCandles.scene.interactive, "Las porciones no quedaron interactivas");
 
-// Cada clic elimina exactamente un triángulo; el cómic solo aparece al cuarto.
+// Cada clic elimina exactamente un triángulo; el individual aparece al cuarto y el final, tras ver los cuatro.
+assert(!afterCandles.groupComic.unlocked && !afterCandles.groupComic.buttonVisible, "El cómic final se desbloqueó solo al apagar velas");
+let completedComics = 0;
 for (const personId of chosenIds) {
   const nomBefore = (await state()).nomSoundCount;
   for (let bite = 1; bite <= 4; bite++) {
@@ -371,6 +436,13 @@ for (const personId of chosenIds) {
     } else {
       assert(biteState.people[personId].eaten, "La porción no terminó tras cuatro mordiscos");
       assert(biteState.modalOpen, "El cómic no se abrió al terminar la porción");
+      assert(biteState.modalKind === "individual", "Se abrió un modal distinto al cómic individual");
+      completedComics += 1;
+      assert(
+        biteState.groupComic.unlocked === (completedComics === 4) &&
+          biteState.groupComic.buttonVisible === (completedComics === 4),
+        "El cómic final no respeta el desbloqueo tras los cuatro individuales"
+      );
       await evaluate("window.__birthdayTest.closeComic()");
     }
   }
@@ -379,6 +451,15 @@ for (const personId of chosenIds) {
 const finalState = await state();
 assert(Object.values(finalState.people).every((person) => person.eaten), "No se completaron las cuatro porciones");
 assert(finalState.nomSoundCount === 16, "El total de sonidos ñam no coincide con los mordiscos");
+assert(new Set(finalState.viewedComicIds).size === 4, "No constan como vistos los cuatro cómics individuales");
+assert(finalState.groupComic.unlocked && finalState.groupComic.buttonVisible, "El botón del cómic final no apareció");
+await evaluate("document.getElementById('group-comic-btn').click()");
+const groupComicState = await state();
+const groupPlaceholder = await evaluate("document.getElementById('modal-gallery').innerText");
+assert(groupComicState.modalOpen && groupComicState.modalKind === "group", "El botón no abre el cómic final");
+assert(groupPlaceholder.includes("cómic final de los cuatro"), "Falta el aviso amistoso del cómic grupal vacío");
+assert(groupPlaceholder.includes("assets/comics/group/"), "El aviso grupal no indica la carpeta correcta");
+await evaluate("window.__birthdayTest.closeComic()");
 
 // Comprobación responsive, órbita táctil y fallback de pulsación mantenida.
 await send("Emulation.setDeviceMetricsOverride", {
@@ -425,6 +506,13 @@ assert(Math.abs(mobileAzimuthAfter - mobileAzimuthBefore) > 0.25, "El arrastre t
 
 await evaluate("document.getElementById('spin-btn').click()");
 await waitFor(async () => (await state()).activeCandleId, "La ruleta móvil no eligió una vela");
+const mobileSpinState = await state();
+assert(mobileSpinState.scene.cameraMode === "shoulder", "La cámara móvil no llegó al plano sobre el hombro");
+assert(mobileSpinState.scene.focusedPersonId === mobileSpinState.activeCandleId, "La cámara móvil enfocó a otra persona");
+assert(mobileSpinState.scene.lastAlignment.error < 1e-7, "La porción móvil no quedó alineada");
+const mobileShoulderAzimuth = mobileSpinState.scene.cameraPose.azimuth;
+assert(await evaluate("window.__birthdayTest.dragCamera(55)"), "La cámara móvil no responde después de la tirada");
+assert(angleDistance((await state()).scene.cameraPose.azimuth, mobileShoulderAzimuth) > 0.25, "No se puede mirar alrededor tras la tirada móvil");
 const mobileBlowPoint = await evaluate(`(() => {
   const rect = document.getElementById("blow-btn").getBoundingClientRect();
   return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
@@ -445,7 +533,7 @@ await waitFor(async () => Object.values((await state()).people).some((person) =>
 await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 await waitFor(async () => !(await state()).songPlaying, "El aviso móvil dejó la fiesta bloqueada");
 
-// La ruta normal conserva una ruleta lenta y vuelve a la vista general antes de elegir.
+// La ruta normal conserva una ruleta lenta y termina en el plano sobre el hombro.
 await send("Emulation.setDeviceMetricsOverride", {
   width: 1280,
   height: 800,
@@ -472,24 +560,24 @@ await waitFor(
   13000
 );
 const productionSpinElapsed = await evaluate("performance.now() - window.__productionSpinStarted");
-assert(productionSpinElapsed >= 8200, `La ruleta de producción y su vuelta duraron solo ${Math.round(productionSpinElapsed)} ms`);
-assert(productionSpinElapsed < 11000, "La ruleta de producción tardó demasiado en volver a la vista general");
+assert(productionSpinElapsed >= 8500, `La ruleta de producción y la cámara duraron solo ${Math.round(productionSpinElapsed)} ms`);
+assert(productionSpinElapsed < 11000, "La ruleta de producción tardó demasiado en llegar al plano sobre el hombro");
 
-await send("Page.navigate", { url: geidoPageUrl });
+await send("Page.navigate", { url: hungrymanPageUrl });
 await waitFor(
-  () => evaluate(`${JSON.stringify(geidoPageUrl)} === location.href && document.body.dataset.personId === "geido"`),
-  "La página individual de Geido no cargó"
+  () => evaluate(`${JSON.stringify(hungrymanPageUrl)} === location.href && document.body.dataset.personId === "hungryman"`),
+  "La página individual de Hungryman no cargó"
 );
-const geidoPage = await evaluate(`({
+const hungrymanPage = await evaluate(`({
   title: document.title,
   name: document.getElementById("person-name")?.textContent,
   songButton: document.getElementById("play-song")?.textContent,
   description: document.querySelector('meta[name="description"]')?.content,
 })`);
-assert(geidoPage.title.startsWith("Geido Senchaz"), "El título individual de Geido es incorrecto");
-assert(geidoPage.name === "Geido Senchaz", "La página individual no muestra el nombre de Geido");
-assert(geidoPage.songButton.includes("canción"), "La página individual de Geido no conserva su canción");
-assert(geidoPage.description.includes("Geido Senchaz"), "La descripción individual de Geido es incorrecta");
+assert(hungrymanPage.title.startsWith("Hungryman"), "El título individual de Hungryman es incorrecto");
+assert(hungrymanPage.name === "Hungryman", "La página individual no muestra el nombre de Hungryman");
+assert(hungrymanPage.songButton.includes("canción"), "La página individual de Hungryman no conserva su canción");
+assert(hungrymanPage.description.includes("Hungryman"), "La descripción individual de Hungryman es incorrecta");
 
 await send("Page.navigate", { url: carlosPageUrl });
 await waitFor(
@@ -517,9 +605,11 @@ console.log(JSON.stringify({
   browserErrors: errors,
   crawlSamples: crawlSamples.length,
   walkers: sceneState.walkers.length,
+  seatedPeople: sceneState.seatedPeople.map((person) => ({ id: person.id, scale: person.scale, traits: person.traits })),
   npcTested: npcTarget.id,
   productionSpinMs: Math.round(productionSpinElapsed),
-  detailPages: [geidoPage.name, carlosPage.name],
+  groupComicUnlocked: finalState.groupComic.unlocked,
+  detailPages: [hungrymanPage.name, carlosPage.name],
 }, null, 2));
 
 socket.close();
