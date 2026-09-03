@@ -25,7 +25,7 @@
   const CAMERA_RESET_MS = TEST_MODE ? 80 : REDUCED_MOTION ? 220 : 900;
   const CAMERA_SHOULDER_MS = TEST_MODE ? 120 : REDUCED_MOTION ? 260 : 1100;
   const BLOW_DURATION_MS = TEST_MODE ? 40 : 680;
-  const BITE_DURATION_MS = TEST_MODE ? 45 : 460;
+  const DEFAULT_BITE_DURATION_MS = 1000;
   const TAU = Math.PI * 2;
 
   function degToRad(degrees) {
@@ -43,10 +43,6 @@
 
   function easeOutCubic(t) {
     return 1 - Math.pow(1 - t, 3);
-  }
-
-  function easeInCubic(t) {
-    return t * t * t;
   }
 
   function rouletteEase(t) {
@@ -229,30 +225,53 @@
     const glass = new THREE.MeshPhysicalMaterial({
       color: 0xe9f4ff,
       transparent: true,
-      opacity: 0.3,
+      opacity: 0.22,
       roughness: 0.08,
       transmission: 0.45,
+      depthWrite: false,
       side: THREE.DoubleSide,
     });
-    const amber = new THREE.MeshStandardMaterial({ color: 0xe9981d, transparent: true, opacity: 0.88, roughness: 0.25 });
+    const amber = new THREE.MeshStandardMaterial({
+      color: 0xe9981d,
+      emissive: 0x351500,
+      emissiveIntensity: 0.22,
+      roughness: 0.28,
+    });
     const foam = new THREE.MeshStandardMaterial({ color: 0xfff7dc, roughness: 0.9 });
 
-    const drink = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.22, 0.72, 28), amber), true, true);
-    drink.position.y = 0.38;
+    const drink = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.235, 0.68, 28), amber), true, true);
+    drink.position.y = 0.39;
+    drink.renderOrder = 1;
     group.add(drink);
 
     const outer = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.28, 0.86, 28, 1, true), glass);
     outer.position.y = 0.43;
+    outer.renderOrder = 2;
     group.add(outer);
 
-    const foamTop = new THREE.Mesh(new THREE.CylinderGeometry(0.255, 0.255, 0.12, 28), foam);
-    foamTop.position.y = 0.77;
+    const foamTop = new THREE.Mesh(new THREE.CylinderGeometry(0.275, 0.275, 0.12, 28), foam);
+    foamTop.position.y = 0.765;
+    foamTop.renderOrder = 3;
     group.add(foamTop);
+
+    const beerTop = new THREE.Mesh(new THREE.CircleGeometry(0.265, 28), amber);
+    beerTop.rotation.x = -Math.PI / 2;
+    beerTop.position.y = 0.731;
+    beerTop.renderOrder = 1;
+    group.add(beerTop);
 
     const handle = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.055, 10, 24, Math.PI * 1.5), glass);
     handle.rotation.y = Math.PI / 2;
     handle.position.set(0.28, 0.47, 0);
+    handle.renderOrder = 2;
     group.add(handle);
+    group.userData.liquidProfile = {
+      kind: "beer",
+      color: "#e9981d",
+      fillHeight: 0.68,
+      fillRatio: 0.79,
+      opacity: 1,
+    };
     return group;
   }
 
@@ -261,20 +280,34 @@
     const glass = new THREE.MeshPhysicalMaterial({
       color: 0xf0f6ff,
       transparent: true,
-      opacity: 0.28,
+      opacity: 0.2,
       roughness: 0.05,
       transmission: 0.5,
+      depthWrite: false,
       side: THREE.DoubleSide,
     });
-    const wine = new THREE.MeshStandardMaterial({ color: 0x8e1834, transparent: true, opacity: 0.86, roughness: 0.25 });
+    const wine = new THREE.MeshStandardMaterial({
+      color: 0x8e1834,
+      emissive: 0x26030d,
+      emissiveIntensity: 0.2,
+      roughness: 0.28,
+    });
 
     const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.15, 0.62, 30, 1, true), glass);
     bowl.position.y = 0.78;
+    bowl.renderOrder = 2;
     group.add(bowl);
 
-    const liquid = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.18, 0.28, 30), wine);
-    liquid.position.y = 0.65;
+    const liquid = new THREE.Mesh(new THREE.CylinderGeometry(0.285, 0.18, 0.34, 30), wine);
+    liquid.position.y = 0.66;
+    liquid.renderOrder = 1;
     group.add(liquid);
+
+    const wineTop = new THREE.Mesh(new THREE.CircleGeometry(0.285, 30), wine);
+    wineTop.rotation.x = -Math.PI / 2;
+    wineTop.position.y = 0.833;
+    wineTop.renderOrder = 1;
+    group.add(wineTop);
 
     const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.48, 12), glass);
     stem.position.y = 0.28;
@@ -283,6 +316,13 @@
     const base = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.3, 0.045, 28), glass);
     base.position.y = 0.03;
     group.add(base);
+    group.userData.liquidProfile = {
+      kind: "wine",
+      color: "#8e1834",
+      fillHeight: 0.34,
+      fillRatio: 0.55,
+      opacity: 1,
+    };
     return group;
   }
 
@@ -332,6 +372,7 @@
       drinkType,
       hasLiquid: true,
       hasFoam: drinkType === "beer",
+      liquidProfile: { ...drink.userData.liquidProfile },
       chairPosition: chairPosition.clone(),
       platePosition: platePosition.clone(),
     };
@@ -489,39 +530,43 @@
   function createSeatedPerson(person, index, chairPosition, outwardDirection) {
     const profiles = {
       hungryman: {
-        scale: 1.72,
-        width: 1.28,
+        scale: 1.38,
+        width: 1.18,
         torso: 0x6a2743,
         skin: 0xc9825b,
         hair: 0x171219,
-        headY: 2.12,
-        traits: ["oversized", "bald", "long-black-beard"],
+        headY: 2.08,
+        headRadius: 0.41,
+        traits: ["largest", "bald", "long-black-beard"],
       },
       dientes: {
-        scale: 0.96,
+        scale: 1.14,
         width: 1,
         torso: 0x355f91,
         skin: 0xe0a47c,
         hair: 0x30231f,
-        headY: 1.92,
+        headY: 1.98,
+        headRadius: 0.43,
         traits: ["round-glasses", "thin-moustache", "neck-length-thick-hair"],
       },
       daviles: {
-        scale: 0.98,
+        scale: 1.14,
         width: 1,
         torso: 0xf7f5ed,
         skin: 0xd89a72,
         hair: 0x432c25,
-        headY: 1.92,
+        headY: 1.98,
+        headRadius: 0.43,
         traits: ["full-beard", "short-hair", "pharmacist-coat", "orange-cat"],
       },
       carlos: {
-        scale: 0.68,
+        scale: 1.02,
         width: 0.92,
         torso: 0x3f745f,
         skin: 0xefc3a0,
         hair: 0x32231f,
-        headY: 1.9,
+        headY: 1.98,
+        headRadius: 0.44,
         traits: ["smallest", "trimmed-beard", "small-glasses", "neat-fringe"],
       },
     };
@@ -546,7 +591,7 @@
     neck.position.y = 1.78;
     root.add(neck);
 
-    const headRadius = person.id === "hungryman" ? 0.4 : 0.34;
+    const headRadius = profile.headRadius;
     const head = setShadow(new THREE.Mesh(new THREE.SphereGeometry(headRadius, 8, 6), skin), true, true);
     head.position.y = profile.headY;
     root.add(head);
@@ -571,12 +616,12 @@
     const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x211921 });
     [-1, 1].forEach((side) => {
       const eye = new THREE.Mesh(new THREE.SphereGeometry(0.027, 6, 4), eyeMaterial);
-      eye.position.set(side * 0.12, profile.headY + 0.04, headRadius * 0.94);
+      eye.position.set(side * headRadius * 0.34, profile.headY + 0.04, headRadius * 0.94);
       root.add(eye);
     });
 
     if (person.id === "hungryman") {
-      const beardCrown = new THREE.Mesh(new THREE.SphereGeometry(0.38, 7, 5), dark);
+      const beardCrown = new THREE.Mesh(new THREE.SphereGeometry(0.39, 7, 5), dark);
       beardCrown.scale.set(1.02, 0.72, 0.58);
       beardCrown.position.set(0, profile.headY - 0.18, 0.28);
       root.add(beardCrown);
@@ -591,22 +636,22 @@
     }
 
     if (person.id === "dientes") {
-      const backHair = setShadow(new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.68, 0.25), dark), true, true);
+      const backHair = setShadow(new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.76, 0.28), dark), true, true);
       backHair.position.set(0, profile.headY - 0.25, -0.22);
       root.add(backHair);
-      createSmallGlasses(root, profile.headY + 0.04, 0.325, glass, 0.115);
+      createSmallGlasses(root, profile.headY + 0.04, headRadius * 0.96, glass, 0.135);
       [-1, 1].forEach((side) => {
-        const moustache = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.035, 0.055), dark);
-        moustache.position.set(side * 0.075, profile.headY - 0.1, 0.325);
+        const moustache = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.045, 0.065), dark);
+        moustache.position.set(side * 0.09, profile.headY - 0.11, headRadius * 0.96);
         moustache.rotation.z = side * 0.13;
         root.add(moustache);
       });
     }
 
     if (person.id === "daviles") {
-      const beard = new THREE.Mesh(new THREE.SphereGeometry(0.33, 8, 5), dark);
+      const beard = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 5), dark);
       beard.scale.set(1.02, 0.72, 0.64);
-      beard.position.set(0, profile.headY - 0.18, 0.22);
+      beard.position.set(0, profile.headY - 0.2, 0.29);
       root.add(beard);
       const seam = new THREE.Mesh(
         new THREE.BoxGeometry(0.035, 0.82, 0.025),
@@ -640,13 +685,13 @@
     }
 
     if (person.id === "carlos") {
-      createSmallGlasses(root, profile.headY + 0.04, 0.325, glass, 0.105);
-      const beard = new THREE.Mesh(new THREE.BoxGeometry(0.43, 0.13, 0.07), dark);
-      beard.position.set(0, profile.headY - 0.18, 0.31);
+      createSmallGlasses(root, profile.headY + 0.04, headRadius * 0.96, glass, 0.125);
+      const beard = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.15, 0.08), dark);
+      beard.position.set(0, profile.headY - 0.2, headRadius * 0.91);
       root.add(beard);
-      [-0.2, 0, 0.2].forEach((x, fringeIndex) => {
-        const fringe = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.16 + fringeIndex * 0.025, 0.13), dark);
-        fringe.position.set(x, profile.headY + 0.24, 0.27);
+      [-0.23, 0, 0.23].forEach((x, fringeIndex) => {
+        const fringe = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.18 + fringeIndex * 0.025, 0.15), dark);
+        fringe.position.set(x, profile.headY + 0.29, headRadius * 0.78);
         fringe.rotation.z = (1 - fringeIndex) * 0.09;
         root.add(fringe);
       });
@@ -664,7 +709,9 @@
       mesh: root,
       scale: profile.scale,
       traits: profile.traits,
+      headLocalY: profile.headY,
       headWorldY: root.position.y + profile.headY * profile.scale,
+      headRadiusWorld: profile.headRadius * profile.scale,
       chairPosition: chairPosition.clone(),
     };
   }
@@ -1052,6 +1099,7 @@
         drinkType: setting.drinkType,
         hasLiquid: setting.hasLiquid,
         hasFoam: setting.hasFoam,
+        liquidProfile: setting.liquidProfile,
         card: setting.card,
         chairPosition: setting.chairPosition,
         platePosition: setting.platePosition,
@@ -1073,6 +1121,8 @@
     let focusedPersonId = null;
     let lastSpinTrace = [];
     let lastAlignment = null;
+    let lastBiteAnimationDurationMs = null;
+    let lastBiteAnimationElapsedMs = null;
 
     let spinning = false;
     let armedId = null;
@@ -1147,15 +1197,19 @@
       return { found: true, speaking: true, id: walker.id, name: walker.name, phrase };
     }
 
-    function npcScreenPosition(walker, localY = 2.05) {
+    function objectScreenPosition(object, localY = 0) {
       const world = new THREE.Vector3(0, localY, 0);
-      walker.mesh.localToWorld(world);
+      object.localToWorld(world);
       world.project(camera);
       return {
         x: (world.x * 0.5 + 0.5) * canvas.clientWidth,
         y: (-world.y * 0.5 + 0.5) * canvas.clientHeight,
         visible: world.z > -1 && world.z < 1 && world.x > -1 && world.x < 1 && world.y > -1 && world.y < 1,
       };
+    }
+
+    function npcScreenPosition(walker, localY = 2.05) {
+      return objectScreenPosition(walker.mesh, localY);
     }
 
     function updateNpcDialogs() {
@@ -1340,16 +1394,15 @@
         azimuth: startPose.azimuth,
         targetY: overviewPose.targetY,
       };
-      const shoulderSide = seated.index % 2 === 0 ? 1 : -1;
-      const shoulderDistance = seated.id === "hungryman"
-        ? 2.85
-        : 1.35 + seated.scale * 0.42;
-      const shoulderOffset = seated.id === "hungryman" ? 0.12 : 0.075;
+      // Siempre sobre el hombro izquierdo, con suficiente altura y distancia
+      // para conservar la tarta completa y sus cuatro velas en el encuadre.
+      const shoulderDistance = seated.id === "hungryman" ? 4.25 : 3.65;
+      const shoulderOffset = seated.id === "hungryman" ? 0.24 : 0.21;
       const shoulderPose = {
         radius: Math.hypot(seated.mesh.position.x, seated.mesh.position.z) + shoulderDistance,
-        height: seated.headWorldY + 0.18,
-        azimuth: seatAzimuth + shoulderSide * shoulderOffset,
-        targetY: TABLE_SURFACE_Y + CAKE_HEIGHT * 0.78,
+        height: seated.headWorldY + (seated.id === "hungryman" ? 2.1 : 1.85),
+        azimuth: seatAzimuth + shoulderOffset,
+        targetY: TABLE_SURFACE_Y + CAKE_HEIGHT * 0.9,
       };
       const resetCamera = addTween({
         duration: CAMERA_RESET_MS,
@@ -1442,7 +1495,7 @@
       }).then(() => true);
     }
 
-    async function biteSlice(id) {
+    async function biteSlice(id, requestedDurationMs) {
       const slice = slices.get(id);
       if (!interactive || !slice || slice.removed || slice.biting) {
         return slice ? { complete: slice.removed, bites: slice.bites, total: BITE_STEPS, ignored: true } : null;
@@ -1453,23 +1506,30 @@
       const segment = slice.segments[segmentIndex];
       const startPosition = segment.mesh.position.clone();
       const outwardPoint = pointOnCircle(0.5, segment.mid);
+      const animationDurationMs = Number.isFinite(requestedDurationMs) && requestedDurationMs > 0
+        ? requestedDurationMs
+        : DEFAULT_BITE_DURATION_MS;
+      const animationStartedAt = performance.now();
+      lastBiteAnimationDurationMs = animationDurationMs;
 
       await addTween({
-        duration: BITE_DURATION_MS,
-        ease: easeInCubic,
-        onUpdate: (progress) => {
+        duration: animationDurationMs,
+        ease: easeInOutCubic,
+        onUpdate: (progress, linearProgress) => {
+          const chewBounce = Math.abs(Math.sin(linearProgress * Math.PI * 8)) * (1 - linearProgress) * 0.09;
           segment.mesh.position.set(
             startPosition.x + outwardPoint.x * progress,
-            startPosition.y + 0.72 * progress,
+            startPosition.y + 0.72 * progress + chewBounce,
             startPosition.z + outwardPoint.z * progress
           );
-          segment.mesh.rotation.z = Math.sin(progress * Math.PI * 3) * 0.035;
+          segment.mesh.rotation.z = Math.sin(linearProgress * Math.PI * 8) * (1 - linearProgress) * 0.075;
           segment.mesh.scale.setScalar(Math.max(0.04, 1 - progress * 0.94));
           segment.capMaterial.opacity = 1 - progress;
           segment.sideMaterial.opacity = 1 - progress;
           segment.cream.scale.setScalar(Math.max(0.04, 1 - progress));
         },
       });
+      lastBiteAnimationElapsedMs = performance.now() - animationStartedAt;
 
       segment.mesh.visible = false;
       segment.cream.visible = false;
@@ -1487,6 +1547,8 @@
         bites: slice.bites,
         total: BITE_STEPS,
         remaining: Math.max(0, BITE_STEPS - slice.bites),
+        animationDurationMs,
+        animationElapsedMs: lastBiteAnimationElapsedMs,
       };
     }
 
@@ -1596,6 +1658,16 @@
         spinDurationMs: SPIN_DURATION_MS,
         lastSpinTrace: lastSpinTrace.map((sample) => ({ ...sample })),
         lastAlignment: lastAlignment ? { ...lastAlignment } : null,
+        cakeScreenPosition: objectScreenPosition(cakeRoot, CAKE_HEIGHT * 0.5),
+        candleScreenPositions: [...candles.entries()].map(([id, candle]) => ({
+          id,
+          ...objectScreenPosition(candle.group, CANDLE_HEIGHT * 0.68),
+        })),
+        biteAnimation: {
+          defaultDurationMs: DEFAULT_BITE_DURATION_MS,
+          lastDurationMs: lastBiteAnimationDurationMs,
+          lastElapsedMs: lastBiteAnimationElapsedMs,
+        },
         cakeProfile: { ...cakeProfile },
         sliceState,
         placeSettings: placeSettings.map((setting) => ({
@@ -1604,17 +1676,24 @@
           drinkType: setting.drinkType,
           hasLiquid: setting.hasLiquid,
           hasFoam: setting.hasFoam,
+          liquidProfile: { ...setting.liquidProfile },
           chairPosition: { x: setting.chairPosition.x, y: setting.chairPosition.y, z: setting.chairPosition.z },
           platePosition: { x: setting.platePosition.x, y: setting.platePosition.y, z: setting.platePosition.z },
         })),
         seatedPeople: [...seatedPeople.values()].map((seated) => {
           const facing = new THREE.Vector3(0, 0, 1).applyQuaternion(seated.mesh.quaternion).setY(0).normalize();
           const towardCake = new THREE.Vector3(-seated.mesh.position.x, 0, -seated.mesh.position.z).normalize();
+          const headWorld = new THREE.Vector3(0, seated.headLocalY, 0);
+          seated.mesh.localToWorld(headWorld);
+          const headDistance = camera.position.distanceTo(headWorld);
           return {
             id: seated.id,
             scale: seated.scale,
             traits: [...seated.traits],
             headWorldY: seated.headWorldY,
+            headRadiusWorld: seated.headRadiusWorld,
+            headViewportFraction: (2 * Math.atan(seated.headRadiusWorld / headDistance)) / degToRad(camera.fov),
+            headScreenPosition: objectScreenPosition(seated.mesh, seated.headLocalY),
             position: { x: seated.mesh.position.x, y: seated.mesh.position.y, z: seated.mesh.position.z },
             chairPosition: { x: seated.chairPosition.x, y: seated.chairPosition.y, z: seated.chairPosition.z },
             facingCakeDot: facing.dot(towardCake),

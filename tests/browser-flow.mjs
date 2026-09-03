@@ -33,6 +33,11 @@ function angleDistance(first, second) {
   return Math.abs(((second - first + Math.PI) % tau + tau) % tau - Math.PI);
 }
 
+function signedAngleDelta(first, second) {
+  const tau = Math.PI * 2;
+  return ((second - first + Math.PI) % tau + tau) % tau - Math.PI;
+}
+
 async function waitFor(check, message, timeoutMs = 15000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -71,7 +76,7 @@ socket.addEventListener("message", (event) => {
   }
   if (message.method === "Log.entryAdded" && message.params.entry.level === "error") {
     const entry = message.params.entry;
-    const optionalAsset = /\/assets\/(audio|lyrics|song-photos|comics)\//.test(entry.url || entry.text);
+    const optionalAsset = /\/assets\/(audio|lyrics|song-photos|comics|sfx)\//.test(entry.url || entry.text);
     const missingAsset = entry.source === "network" && /404|Failed to load resource/i.test(entry.text);
     if (!optionalAsset && !missingAsset) errors.push(entry.text);
   }
@@ -156,7 +161,7 @@ assert(
   "config.js no conserva exactamente {id,name,color,audio,lyrics,songPhotos,comics}"
 );
 assert(
-  JSON.stringify(initialUi.configNames) === JSON.stringify(["Hungryman", "Dientes", "Carlos Conde", "Daviles"]),
+  JSON.stringify(initialUi.configNames) === JSON.stringify(["Hungryman", "Dientes", "Carlos", "Daviles"]),
   "Los nombres de las cuatro personas no son los esperados"
 );
 assert(JSON.stringify(initialUi.groupComicKeys) === JSON.stringify(["comics"]), "Falta CONFIG.groupComic.comics");
@@ -178,6 +183,20 @@ assert(sceneState.placeSettings.every((setting) => setting.hasLiquid), "Hay vaso
 assert(
   sceneState.placeSettings.filter((setting) => setting.drinkType === "beer").every((setting) => setting.hasFoam),
   "A una cerveza le falta espuma"
+);
+assert(
+  sceneState.placeSettings.filter((setting) => setting.drinkType === "beer").every((setting) => (
+    setting.liquidProfile.kind === "beer" && setting.liquidProfile.fillRatio >= 0.75 &&
+    setting.liquidProfile.fillHeight >= 0.65 && setting.liquidProfile.opacity === 1
+  )),
+  "La cerveza no tiene un cuerpo ámbar opaco bajo la espuma"
+);
+assert(
+  sceneState.placeSettings.filter((setting) => setting.drinkType === "wine").every((setting) => (
+    setting.liquidProfile.kind === "wine" && setting.liquidProfile.fillRatio >= 0.5 &&
+    setting.liquidProfile.fillHeight >= 0.3 && setting.liquidProfile.opacity === 1
+  )),
+  "La copa de vino no tiene un relleno burdeos visible"
 );
 assert(sceneState.productionSpinDurationMs >= 7000, "La ruleta de producción no es lo bastante lenta");
 assert(sceneState.cakeProfile.style === "minecraft-block", "La tarta no usa la geometría Minecraft");
@@ -209,12 +228,13 @@ assert(sceneState.seatedPeople.every((person) => (
 )), "Algún monigote no está colocado en su silla");
 const seatedById = Object.fromEntries(sceneState.seatedPeople.map((person) => [person.id, person]));
 assert(
-  seatedById.hungryman.scale > Math.max(seatedById.dientes.scale, seatedById.daviles.scale) * 1.5 &&
-    seatedById.hungryman.scale > seatedById.carlos.scale * 2,
-  "Hungryman no es exageradamente más grande que los demás"
+  seatedById.hungryman.scale > Math.max(seatedById.dientes.scale, seatedById.daviles.scale) * 1.15 &&
+    seatedById.hungryman.scale < Math.max(seatedById.dientes.scale, seatedById.daviles.scale) * 1.4,
+  "Hungryman no conserva un tamaño grande pero proporcionado"
 );
-assert(seatedById.carlos.scale < Math.min(seatedById.dientes.scale, seatedById.daviles.scale), "Carlos no es el más pequeño");
-assert(["oversized", "bald", "long-black-beard"].every((trait) => seatedById.hungryman.traits.includes(trait)), "Falta la pinta de Hungryman");
+assert(seatedById.carlos.scale >= 1 && seatedById.carlos.scale < Math.min(seatedById.dientes.scale, seatedById.daviles.scale), "Carlos no tiene un tamaño legible y sigue siendo el más pequeño");
+assert(sceneState.seatedPeople.every((person) => person.headRadiusWorld >= 0.44), "Alguna cabeza sigue siendo demasiado pequeña para apreciar sus rasgos");
+assert(["largest", "bald", "long-black-beard"].every((trait) => seatedById.hungryman.traits.includes(trait)), "Falta la pinta de Hungryman");
 assert(["round-glasses", "thin-moustache", "neck-length-thick-hair"].every((trait) => seatedById.dientes.traits.includes(trait)), "Falta la pinta de Dientes");
 assert(["full-beard", "short-hair", "pharmacist-coat", "orange-cat"].every((trait) => seatedById.daviles.traits.includes(trait)), "Falta la pinta de Daviles");
 assert(["trimmed-beard", "small-glasses", "neat-fringe"].every((trait) => seatedById.carlos.traits.includes(trait)), "Falta la pinta de Carlos");
@@ -330,9 +350,16 @@ assert(afterFirstSpin.scene.lastAlignment.error < 1e-7, "La porción elegida no 
 const selectedSetting = afterFirstSpin.scene.placeSettings.find((setting) => setting.id === firstId);
 const selectedPerson = afterFirstSpin.scene.seatedPeople.find((person) => person.id === firstId);
 const selectedChairRadius = Math.hypot(selectedSetting.chairPosition.x, selectedSetting.chairPosition.z);
-assert(afterFirstSpin.scene.cameraPose.radius > selectedChairRadius + 1, "La cámara no quedó detrás de la silla");
-assert(afterFirstSpin.scene.cameraPose.height > selectedPerson.headWorldY, "La cámara no mira por encima del hombro");
-assert(angleDistance(afterFirstSpin.scene.cameraPose.azimuth, selectedSetting.seatAzimuth) < 0.13, "La cámara no quedó alineada con la silla");
+assert(afterFirstSpin.scene.cameraPose.radius > selectedChairRadius + 3.5, "La cámara sigue demasiado pegada a la silla");
+assert(
+  afterFirstSpin.scene.cameraPose.height > selectedPerson.headWorldY + selectedPerson.headRadiusWorld + 1.2,
+  "La cámara no está suficientemente elevada sobre la cabeza"
+);
+const leftShoulderOffset = signedAngleDelta(selectedSetting.seatAzimuth, afterFirstSpin.scene.cameraPose.azimuth);
+assert(leftShoulderOffset >= 0.19 && leftShoulderOffset <= 0.26, "La cámara no queda sobre el hombro izquierdo");
+assert(afterFirstSpin.scene.cakeScreenPosition.visible, "La tarta queda fuera del encuadre de soplido");
+assert(afterFirstSpin.scene.candleScreenPositions.every((candle) => candle.visible), "Alguna vela queda fuera del encuadre de soplido");
+assert(selectedPerson.headViewportFraction < 0.24, "La cabeza elegida sigue tapando demasiado la pantalla");
 const spinTrace = afterFirstSpin.scene.lastSpinTrace;
 assert(spinTrace.length >= 8, "No hay suficientes muestras para comprobar el frenado de la ruleta");
 const spinSpeeds = spinTrace.slice(1).map((sample, index) => {
@@ -418,18 +445,33 @@ const afterCandles = await state();
 assert(new Set(chosenIds).size === 4, "La ruleta no eligió cuatro personas distintas");
 assert(afterCandles.allBlown, "No se activó la fase de mordiscos tras las cuatro velas");
 assert(afterCandles.scene.interactive, "Las porciones no quedaron interactivas");
+assert(afterCandles.biteAudio.path === "assets/sfx/comer.mp3", "El mordisco no apunta a assets/sfx/comer.mp3");
+assert(afterCandles.biteAudio.defaultDurationMs === 1000, "El fallback de mordisco no dura un segundo en producción");
+assert(await evaluate("window.__birthdayTest.setBiteAudioDuration(260)"), "No se pudo simular la duración real del audio");
 
 // Cada clic elimina exactamente un triángulo; el individual aparece al cuarto y el final, tras ver los cuatro.
 assert(!afterCandles.groupComic.unlocked && !afterCandles.groupComic.buttonVisible, "El cómic final se desbloqueó solo al apagar velas");
 let completedComics = 0;
+let synchronizedBiteChecked = false;
 for (const personId of chosenIds) {
   const nomBefore = (await state()).nomSoundCount;
   for (let bite = 1; bite <= 4; bite++) {
+    const biteStartedAt = performance.now();
     const result = await evaluate(`window.__birthdayTest.bite(${JSON.stringify(personId)})`);
+    const biteWallTime = performance.now() - biteStartedAt;
     const biteState = await state();
     assert(result.bites === bite, `El mordisco ${bite} no actualizó la porción`);
     assert(biteState.people[personId].bites === bite, "El estado y la geometría de mordiscos no coinciden");
-    assert(biteState.nomSoundCount === nomBefore + bite, "Falta un único sonido ñam por mordisco");
+    assert(biteState.nomSoundCount === nomBefore + bite, "Falta un único sonido de comer por mordisco");
+    if (!synchronizedBiteChecked) {
+      assert(result.animationDurationMs === 260, "La geometría no recibió la duración leída del audio");
+      assert(biteState.biteAudio.lastTiming.requestedDurationMs === 260, "El controlador no conserva la duración del audio");
+      assert(biteState.scene.biteAnimation.lastDurationMs === 260, "La animación no usa la duración real del sonido");
+      assert(biteWallTime >= 230 && biteWallTime < 650, `El mordisco duró ${Math.round(biteWallTime)} ms en vez de unos 260 ms`);
+      assert(Math.abs(biteState.scene.biteAnimation.lastElapsedMs - 260) < 90, "El tiempo real de animación no coincide con el audio");
+      synchronizedBiteChecked = true;
+      await evaluate("window.__birthdayTest.setBiteAudioDuration(55)");
+    }
     if (bite < 4) {
       assert(!biteState.people[personId].eaten, "La porción desapareció antes del cuarto mordisco");
       assert(!biteState.modalOpen, "El cómic se abrió antes de terminar la porción");
@@ -450,7 +492,8 @@ for (const personId of chosenIds) {
 
 const finalState = await state();
 assert(Object.values(finalState.people).every((person) => person.eaten), "No se completaron las cuatro porciones");
-assert(finalState.nomSoundCount === 16, "El total de sonidos ñam no coincide con los mordiscos");
+assert(finalState.nomSoundCount === 16, "El total de sonidos de comer no coincide con los mordiscos");
+assert(finalState.biteAudio.fallbackCount === 16, "El fallback de prueba no sonó una vez por mordisco");
 assert(new Set(finalState.viewedComicIds).size === 4, "No constan como vistos los cuatro cómics individuales");
 assert(finalState.groupComic.unlocked && finalState.groupComic.buttonVisible, "El botón del cómic final no apareció");
 await evaluate("document.getElementById('group-comic-btn').click()");
@@ -588,8 +631,8 @@ const carlosPage = await evaluate(`({
   title: document.title,
   name: document.getElementById("person-name")?.textContent,
 })`);
-assert(carlosPage.title.startsWith("Carlos Conde"), "La ruta representativa de Carlos perdió sus metadatos");
-assert(carlosPage.name === "Carlos Conde", "La ruta representativa de Carlos perdió su contenido");
+assert(carlosPage.title.startsWith("Carlos ·"), "La ruta representativa de Carlos perdió sus metadatos");
+assert(carlosPage.name === "Carlos", "La ruta representativa de Carlos perdió su contenido");
 
 assert(errors.length === 0, `Errores del navegador: ${errors.join(" | ")}`);
 
@@ -609,6 +652,7 @@ console.log(JSON.stringify({
   npcTested: npcTarget.id,
   productionSpinMs: Math.round(productionSpinElapsed),
   groupComicUnlocked: finalState.groupComic.unlocked,
+  biteAudio: finalState.biteAudio,
   detailPages: [hungrymanPage.name, carlosPage.name],
 }, null, 2));
 

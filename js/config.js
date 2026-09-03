@@ -60,7 +60,7 @@ const CONFIG = {
     },
     {
       id: "carlos",
-      name: "Carlos Conde",
+      name: "Carlos",
       color: "#6fe0a0",
       audio: "assets/audio/carlos.mp3",
       lyrics: "assets/lyrics/carlos.txt",

@@ -13,6 +13,10 @@
   const MISSING_AUDIO_NOTICE_MS = TEST_MODE ? 90 : 1700;
   const AUDIO_LOAD_TIMEOUT_MS = TEST_MODE ? 350 : 5500;
   const BITE_STEPS = global.Cake3D ? global.Cake3D.BITE_STEPS : 4;
+  const BITE_AUDIO_PATH = "assets/sfx/comer.mp3";
+  const DEFAULT_BITE_AUDIO_DURATION_MS = 1000;
+  const TEST_MISSING_BITE_DURATION_MS = 70;
+  const BITE_METADATA_TIMEOUT_MS = TEST_MODE ? 350 : 3500;
   const PERSON_PAGES = {
     hungryman: "personas/hungryman.html",
     dientes: "personas/dientes.html",
@@ -29,6 +33,16 @@
   let currentAudio = null;
   let nomSoundCount = 0;
   let songExperienceRun = null;
+  let biteInProgress = false;
+  let biteAudioStatus = "idle";
+  let biteAudioDurationMs = DEFAULT_BITE_AUDIO_DURATION_MS;
+  let biteAudioMetadataPromise = null;
+  let biteAudioProbe = null;
+  let activeBiteAudio = null;
+  let biteAudioPlayCount = 0;
+  let biteFallbackCount = 0;
+  let biteAudioTestOverride = false;
+  let lastBiteTiming = null;
 
   let modalPerson = null;
   let modalKind = null;
@@ -360,8 +374,8 @@
     return sfxContext;
   }
 
-  function playNomSound() {
-    nomSoundCount += 1;
+  function playFallbackBiteSound() {
+    biteFallbackCount += 1;
     try {
       const context = getSfxContext();
       if (!context) return;
@@ -386,6 +400,105 @@
     } catch (error) {
       // El mordisco sigue funcionando aunque Web Audio no esté disponible.
     }
+  }
+
+  function loadBiteAudioMetadata() {
+    if (biteAudioMetadataPromise) return biteAudioMetadataPromise;
+    biteAudioStatus = "loading";
+
+    biteAudioMetadataPromise = new Promise((resolve) => {
+      const audio = new Audio();
+      biteAudioProbe = audio;
+      let settled = false;
+      const timer = global.setTimeout(() => finish("missing"), BITE_METADATA_TIMEOUT_MS);
+
+      function cleanup() {
+        global.clearTimeout(timer);
+        audio.removeEventListener("loadedmetadata", handleMetadata);
+        audio.removeEventListener("error", handleError);
+      }
+
+      function finish(status, durationMs = DEFAULT_BITE_AUDIO_DURATION_MS) {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (!biteAudioTestOverride) {
+          biteAudioStatus = status;
+          biteAudioDurationMs = durationMs;
+        }
+        resolve({ status: biteAudioStatus, durationMs: biteAudioDurationMs });
+      }
+
+      function handleMetadata() {
+        const durationSeconds = Number(audio.duration);
+        if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+          finish("ready", durationSeconds * 1000);
+        } else {
+          finish("missing");
+        }
+      }
+
+      function handleError() {
+        finish("missing");
+      }
+
+      audio.addEventListener("loadedmetadata", handleMetadata, { once: true });
+      audio.addEventListener("error", handleError, { once: true });
+      audio.preload = "metadata";
+      audio.src = BITE_AUDIO_PATH;
+      try {
+        audio.load();
+      } catch (error) {
+        finish("missing");
+      }
+    });
+    return biteAudioMetadataPromise;
+  }
+
+  async function getBiteAnimationDurationMs() {
+    if (biteAudioStatus === "idle" || biteAudioStatus === "loading") {
+      await loadBiteAudioMetadata();
+    }
+    if (biteAudioStatus === "ready") return biteAudioDurationMs;
+    return TEST_MODE ? TEST_MISSING_BITE_DURATION_MS : DEFAULT_BITE_AUDIO_DURATION_MS;
+  }
+
+  async function startBiteSound() {
+    nomSoundCount += 1;
+    if (biteAudioStatus !== "ready" || biteAudioTestOverride) {
+      playFallbackBiteSound();
+      return { playedFile: false, usedFallback: true };
+    }
+
+    if (activeBiteAudio) {
+      activeBiteAudio.pause();
+      activeBiteAudio = null;
+    }
+    const audio = new Audio(BITE_AUDIO_PATH);
+    activeBiteAudio = audio;
+    audio.preload = "auto";
+    audio.addEventListener("ended", () => {
+      if (activeBiteAudio === audio) activeBiteAudio = null;
+    }, { once: true });
+
+    try {
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.then === "function") await playPromise;
+      biteAudioPlayCount += 1;
+      return { playedFile: true, usedFallback: false };
+    } catch (error) {
+      if (activeBiteAudio === audio) activeBiteAudio = null;
+      playFallbackBiteSound();
+      return { playedFile: false, usedFallback: true };
+    }
+  }
+
+  function setBiteAudioDurationForTest(durationMs) {
+    if (!TEST_MODE || !Number.isFinite(durationMs) || durationMs <= 0) return false;
+    biteAudioTestOverride = true;
+    biteAudioStatus = "ready";
+    biteAudioDurationMs = durationMs;
+    return true;
   }
 
   let micState = "closed";
@@ -607,31 +720,45 @@
 
   async function onSliceChosen(id) {
     const itemState = state[id];
-    if (!allBlown || songPlaying || !itemState || !itemState.blown || itemState.eaten || itemState.biting) return null;
+    if (!allBlown || songPlaying || biteInProgress || !itemState || !itemState.blown || itemState.eaten || itemState.biting) return null;
 
+    biteInProgress = true;
     itemState.biting = true;
-    playNomSound();
-    const result = await cake.biteSlice(id);
-    itemState.biting = false;
-    if (!result || result.ignored) return result;
+    try {
+      const animationDurationMs = await getBiteAnimationDurationMs();
+      const sound = await startBiteSound();
+      const startedAt = performance.now();
+      const result = await cake.biteSlice(id, animationDurationMs);
+      lastBiteTiming = {
+        requestedDurationMs: animationDurationMs,
+        elapsedMs: performance.now() - startedAt,
+        audioStatus: biteAudioStatus,
+        playedFile: sound.playedFile,
+        usedFallback: sound.usedFallback,
+      };
+      if (!result || result.ignored) return result;
 
-    itemState.bites = result.bites;
-    itemState.eaten = result.complete;
-    updateLegend(id);
+      itemState.bites = result.bites;
+      itemState.eaten = result.complete;
+      updateLegend(id);
 
-    const person = personById(id);
-    if (result.complete) {
-      const remainingSlices = CONFIG.people.filter((candidate) => !state[candidate.id].eaten);
-      setStatus(
-        remainingSlices.length === 0
-          ? "¡No queda ni una miga! Feliz cumpleaños a los cuatro 🎉"
-          : `¡Porción de ${person.displayName || person.name} terminada! Quedan ${remainingSlices.length}.`
-      );
-      openComic(id);
-    } else {
-      setStatus(`¡Ñam! A ${person.displayName || person.name} le quedan ${result.remaining} ${result.remaining === 1 ? "mordisco" : "mordiscos"}.`);
+      const person = personById(id);
+      if (result.complete) {
+        const remainingSlices = CONFIG.people.filter((candidate) => !state[candidate.id].eaten);
+        setStatus(
+          remainingSlices.length === 0
+            ? "¡No queda ni una miga! Feliz cumpleaños a los cuatro 🎉"
+            : `¡Porción de ${person.displayName || person.name} terminada! Quedan ${remainingSlices.length}.`
+        );
+        openComic(id);
+      } else {
+        setStatus(`¡Ñam! A ${person.displayName || person.name} le quedan ${result.remaining} ${result.remaining === 1 ? "mordisco" : "mordiscos"}.`);
+      }
+      return result;
+    } finally {
+      itemState.biting = false;
+      biteInProgress = false;
     }
-    return result;
   }
 
   function openComic(id) {
@@ -773,6 +900,7 @@
       dragCamera: (deltaX) => cake && cake.testDragBy(deltaX),
       previewSong: previewSongForTest,
       talkToNpc: (id) => cake && cake.talkToNpc(id),
+      setBiteAudioDuration: setBiteAudioDurationForTest,
       openGroupComic,
       closeComic,
       getState() {
@@ -784,6 +912,17 @@
           songPlaying,
           allBlown,
           nomSoundCount,
+          biteInProgress,
+          biteAudio: {
+            path: BITE_AUDIO_PATH,
+            status: biteAudioStatus,
+            durationMs: biteAudioDurationMs,
+            defaultDurationMs: DEFAULT_BITE_AUDIO_DURATION_MS,
+            testMissingDurationMs: TEST_MISSING_BITE_DURATION_MS,
+            playCount: biteAudioPlayCount,
+            fallbackCount: biteFallbackCount,
+            lastTiming: lastBiteTiming ? { ...lastBiteTiming } : null,
+          },
           modalOpen: !document.getElementById("comic-modal").classList.contains("hidden"),
           modalKind,
           viewedComicIds: [...viewedComicIds],
@@ -829,6 +968,7 @@
     renderLegend(displayNames(CONFIG.people));
     bindBlowControls();
     bindModalControls();
+    loadBiteAudioMetadata();
 
     if (!global.THREE || !global.Cake3D) {
       document.getElementById("scene-fallback").hidden = false;
@@ -861,6 +1001,8 @@
 
   global.addEventListener("beforeunload", () => {
     releaseBlowHold();
+    if (activeBiteAudio) activeBiteAudio.pause();
+    if (biteAudioProbe) biteAudioProbe.removeAttribute("src");
     if (cake) cake.dispose();
   });
   document.addEventListener("DOMContentLoaded", init);

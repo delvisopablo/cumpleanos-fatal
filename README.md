@@ -1,6 +1,6 @@
 # cumpleanos-fatal
 
-Una mesa de cumpleaños 3D para Hungryman, Dientes, Carlos Conde y Daviles. La
+Una mesa de cumpleaños 3D para Hungryman, Dientes, Carlos y Daviles. La
 portada está construida con Three.js y sigue siendo un sitio completamente
 estático, sin backend ni paso de compilación.
 
@@ -12,7 +12,8 @@ estático, sin backend ni paso de compilación.
 2. Puedes arrastrar el fondo con ratón o con el dedo para mirar alrededor.
 3. La ruleta arranca muy rápido y frena progresivamente. Elige al azar una vela
    pendiente, alinea esa porción con su persona y lleva la cámara suavemente a
-   un plano sobre su hombro. Desde ahí se puede seguir orbitando libremente.
+   un plano elevado sobre su hombro izquierdo. Desde ahí se ve toda la tarta y
+   se puede seguir orbitando libremente.
 4. La persona elegida mantiene pulsado el botón para abrir el micrófono y sopla
    de verdad. Al soltar se cierra. Si no hay micrófono, mantener pulsado cerca
    de un segundo activa el modo alternativo. La vela activa depende del turno,
@@ -22,8 +23,8 @@ estático, sin backend ni paso de compilación.
    configuradas aparecen junto a ella. Hasta que termine no se puede girar ni
    soplar otra vela.
 6. Cuando las cuatro velas están apagadas, cada porción se come en cuatro
-   mordiscos. Cada mordisco tiene un sonido sintetizado y elimina un triángulo
-   de tarta.
+   mordiscos. Cada mordisco reproduce `assets/sfx/comer.mp3` y su animación dura
+   exactamente lo mismo que el audio; si falta, usa un fallback de un segundo.
 7. Al terminar una porción se abre el cómic de esa persona. Tras ver los cuatro
    individuales aparece el botón **Cómic final**, que abre la historia conjunta.
    Si todavía no hay imágenes, se mantiene el aviso de “cómic en camino”.
@@ -55,7 +56,7 @@ campos:
 ```js
 {
   id: "carlos",
-  name: "Carlos Conde",
+  name: "Carlos",
   color: "#6fe0a0",
   audio: "assets/audio/carlos.mp3",
   lyrics: "assets/lyrics/carlos.txt",
@@ -69,6 +70,7 @@ campos:
 - Fotos de canción: `assets/song-photos/<id>/*.{jpg,png,webp}`
 - Cómics: `assets/comics/<id>/*.jpg`
 - Cómic grupal: `assets/comics/group/*.jpg`
+- Sonido de comer: `assets/sfx/comer.mp3`
 
 Incluye las rutas de fotos en `songPhotos` y las de cómic en `comics`, siempre
 en el orden en que deben aparecer. Las rutas y los avisos amistosos se comparten
@@ -116,5 +118,6 @@ assets/comics/         páginas de los cómics
 assets/lyrics/         letras opcionales de cortinilla
 assets/song-photos/    fotos opcionales durante cada canción
 assets/npcs/           nombres y frases de los 16 invitados
+assets/sfx/            efecto de sonido del mordisco
 tests/browser-flow.mjs prueba funcional con un navegador Chromium real
 ```
