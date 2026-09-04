@@ -155,10 +155,23 @@
   margin-bottom: 0.35rem;
 }
 
+.personal-video {
+  width: 100%;
+  margin-top: 1.2rem;
+  border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.22);
+  background: #000;
+}
+
+.personal-video.hidden { display: none; }
+
 .personal-gallery {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
-  gap: 0.8rem;
+  display: flex;
+  min-height: 180px;
+  max-height: 64vh;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
   margin-top: 1rem;
 }
 
@@ -166,6 +179,55 @@
   width: 100%;
   border-radius: 12px;
   box-shadow: 0 7px 20px rgba(0,0,0,0.18);
+}
+
+.personal-gallery .comic-page-canvas {
+  display: block;
+  max-width: 100%;
+  border-radius: 10px;
+  box-shadow: 0 7px 20px rgba(0,0,0,0.18);
+}
+
+.personal-gallery.is-zoomed { justify-content: flex-start; }
+.personal-gallery.is-zoomed .comic-page-canvas { max-width: none; }
+
+.personal-comic-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  margin-top: 0.8rem;
+}
+
+.personal-comic-nav[hidden] { display: none; }
+
+.personal-comic-nav button {
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--person-color, var(--accent));
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.personal-comic-nav button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.personal-comic-nav #personal-zoom-btn {
+  width: 42px;
+  font-size: 1rem;
+  color: #20152c;
+  background: #fff;
+  border: 2px solid rgba(58,43,33,0.18);
+}
+
+.personal-comic-nav #personal-zoom-btn[aria-pressed="true"] {
+  background: #ffb703;
+  border-color: transparent;
 }
 
 .personal-placeholder {

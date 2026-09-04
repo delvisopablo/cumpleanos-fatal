@@ -7,9 +7,12 @@ estático, sin backend ni paso de compilación.
 ## Cómo funciona
 
 1. Cada cumpleañero está sentado en su silla, representado por un monigote
-   low-poly propio y mirando hacia su porción. Otros 16 invitados recorren el
-   perímetro sin cruzar la mesa y dicen una frase al tocarlos.
-2. Puedes arrastrar el fondo con ratón o con el dedo para mirar alrededor.
+   low-poly propio y mirando hacia su porción. El resto de invitados (tantos
+   como haya en `assets/npcs/phrases.json`) recorren el perímetro sin cruzar
+   la mesa y dicen una frase al tocarlos.
+2. Puedes arrastrar el fondo con ratón o con el dedo para mirar alrededor, en
+   cualquier momento — también mientras suena una canción o se reproduce un
+   vídeo tras soplar una vela.
 3. La ruleta arranca muy rápido y frena progresivamente. Elige al azar una vela
    pendiente, alinea esa porción con su persona y lleva la cámara suavemente a
    un plano elevado sobre su hombro izquierdo. Desde ahí se ve toda la tarta y
@@ -18,16 +21,22 @@ estático, sin backend ni paso de compilación.
    de verdad. Al soltar se cierra. Si no hay micrófono, mantener pulsado cerca
    de un segundo activa el modo alternativo. La vela activa depende del turno,
    no de la orientación actual de la cámara.
-5. Al apagarse la vela suena su canción y, si existe su archivo de letra, aparece
-   una cortinilla continua calculada según la duración real del audio. Las fotos
-   configuradas aparecen junto a ella. Hasta que termine no se puede girar ni
-   soplar otra vela.
+5. Al apagarse la vela ocurre una de estas dos cosas, según la persona:
+   - Si tiene `video` configurado, se reproduce ese vídeo (con su propio
+     sonido) a pantalla visible.
+   - Si no, suena su canción y, si existe su archivo de letra, aparece una
+     cortinilla continua calculada según la duración real del audio, con las
+     fotos configuradas junto a ella.
+   Hasta que termine la canción o el vídeo no se puede girar ni soplar otra
+   vela, pero la cámara se puede seguir moviendo en todo momento.
 6. Cuando las cuatro velas están apagadas, cada porción se come en cuatro
    mordiscos. Cada mordisco reproduce `assets/sfx/comer.mp3` y su animación dura
    exactamente lo mismo que el audio; si falta, usa un fallback de un segundo.
-7. Al terminar una porción se abre el cómic de esa persona. Tras ver los cuatro
-   individuales aparece el botón **Cómic final**, que abre la historia conjunta.
-   Si todavía no hay imágenes, se mantiene el aviso de “cómic en camino”.
+7. Al terminar una porción se abre el cómic en PDF de esa persona, con flechas
+   para pasar de página en página y una lupa para ampliarla. Tras ver los
+   cuatro individuales aparece el botón **Cómic final**, que abre la historia
+   conjunta. Si todavía no hay PDF subido, se mantiene el aviso de “cómic en
+   camino”.
 
 Los nombres de la barra inferior enlazan a las cuatro páginas individuales.
 
@@ -76,34 +85,40 @@ campos:
   id: "carlos",
   name: "Carlos",
   color: "#6fe0a0",
-  audio: "assets/audio/carlos.mp3",
+  audio: "assets/audio/carlos.ogg",
+  video: null,
   lyrics: "assets/lyrics/carlos.txt",
   songPhotos: [],
-  comics: []
+  comicPdf: "assets/comics/carlos/comic.pdf"
 }
 ```
 
-- Canciones: `assets/audio/<id>.mp3`
+- Canciones: `assets/audio/<id>.mp3` o `assets/audio/<id>.ogg` (si el
+  navegador no puede reproducir el formato, se muestra un aviso amistoso en
+  vez de fallar en silencio).
+- Vídeo en vez de canción: `assets/video/<id>.mp4`, puesto en el campo
+  `video`. Si una persona tiene vídeo, se reproduce eso al soplar su vela en
+  lugar de audio+letra+fotos (que se ignoran para ella).
 - Letras: `assets/lyrics/<id>.txt` (primera línea = título; resto = letra)
 - Fotos de canción: `assets/song-photos/<id>/*.{jpg,png,webp}`
-- Cómics: `assets/comics/<id>/*.jpg`
-- Cómic grupal: `assets/comics/group/*.jpg`
+- Cómics: un único PDF de varias páginas en `assets/comics/<id>/comic.pdf`,
+  puesto en el campo `comicPdf`. Se muestra con flechas de página y una lupa
+  para ampliar.
+- Cómic grupal: `assets/comics/group/comic.pdf`
 - Sonido de comer: `assets/sfx/comer.mp3`
-
-Incluye las rutas de fotos en `songPhotos` y las de cómic en `comics`, siempre
-en el orden en que deben aparecer. Las rutas y los avisos amistosos se comparten
-entre la escena 3D y las páginas individuales.
 
 El cómic final se configura aparte, en la raíz de `CONFIG`:
 
 ```js
 groupComic: {
-  comics: ["assets/comics/group/1.jpg"]
+  pdf: "assets/comics/group/comic.pdf"
 }
 ```
 
-Los 16 invitados se configuran en `assets/npcs/phrases.json`, con ids de
-`npc-01` a `npc-16`, nombre y una lista de frases por personaje.
+Los invitados que pasean alrededor de la mesa se configuran en
+`assets/npcs/phrases.json`, con ids `npc-01`, `npc-02`… nombre y una lista de
+frases por personaje. La cantidad de invitados que aparecen caminando se
+ajusta automáticamente a cuántas entradas tenga ese archivo.
 
 ## Prueba automática en navegador
 
@@ -126,16 +141,18 @@ Se puede cambiar la dirección con `SITE_URL` y el puerto con `CDP_PORT`.
 index.html             portada y controles
 css/style.css          escena, interfaz fija y modal
 css/persona.css        páginas individuales
-js/config.js           personas, colores, canciones y cómics individuales/grupal
+js/config.js           personas, colores, canciones/vídeos y cómics individuales/grupal
 js/cake3d.js           sala, cámara, monigotes, invitados, mesa y tarta
-js/script.js           ruleta, micrófono, cortinilla, mordiscos y desbloqueos
+js/script.js           ruleta, micrófono, cortinilla, vídeo, mordiscos y desbloqueos
+js/comic-viewer.js     carga y dibuja páginas de cómic en PDF (PDF.js)
 js/persona.js          contenido de las páginas individuales
 personas/              una página por cumpleañero
-assets/audio/          canciones
-assets/comics/         páginas de los cómics
+assets/audio/          canciones (.mp3 o .ogg)
+assets/video/          vídeos que sustituyen a la canción de alguien
+assets/comics/         un comic.pdf por persona y el del grupo
 assets/lyrics/         letras opcionales de cortinilla
 assets/song-photos/    fotos opcionales durante cada canción
-assets/npcs/           nombres y frases de los 16 invitados
+assets/npcs/           nombres y frases de los invitados que pasean
 assets/sfx/            efecto de sonido del mordisco
 tests/browser-flow.mjs prueba funcional con un navegador Chromium real
 ```

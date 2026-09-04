@@ -11,27 +11,40 @@
               archivos, o tendrás que renombrarlos también.
     name   -> nombre que se muestra en la web.
     color  -> color de su porción de tarta y de su vela (código hex).
-    audio  -> ruta al archivo de la canción. Súbelo a assets/audio/
-              con ese mismo nombre de archivo.
+    audio  -> ruta al archivo de la canción. Puede ser .mp3 o .ogg; súbelo
+              a assets/audio/ con ese mismo nombre de archivo. Se ignora si
+              la persona tiene "video" (ver abajo).
+    video  -> opcional: string con la ruta a un vídeo (por ejemplo
+              assets/video/<id>.mp4) o null. Si tiene vídeo, al soplar su
+              vela se reproduce ESE vídeo con su propio sonido a pantalla
+              visible en vez de la canción con letra y fotos. audio, lyrics
+              y songPhotos se ignoran para esa persona.
     lyrics -> ruta al archivo de letra. La primera línea es el título;
-              el resto se desplaza como una cortinilla.
-    songPhotos -> fotos que aparecen durante la canción, en orden.
-    comics -> lista de imágenes del cómic, en orden. Puede tener 1 o
-              varias páginas. Súbelas a assets/comics/<id>/ con esos
-              nombres. Si la lista está vacía, se mostrará un aviso de
-              "cómic en camino" hasta que añadas las imágenes aquí.
+              el resto se desplaza como una cortinilla. Se ignora si tiene
+              "video".
+    songPhotos -> fotos que aparecen durante la canción, en orden. Se
+              ignoran si tiene "video".
+    comicPdf -> ruta a un único PDF con las páginas de su cómic (por
+              ejemplo assets/comics/<id>/comic.pdf), o null si todavía no
+              lo has subido. Se muestra con flechas de página y lupa de
+              zoom. Si es null o el archivo no existe, se ve el aviso de
+              "cómic en camino".
 
-  groupComic.comics -> páginas de la historia conjunta. Súbelas a
-              assets/comics/group/ y añade sus rutas en orden.
+  groupComic.pdf -> igual que comicPdf pero para el cómic grupal de los
+              cuatro. Súbelo a assets/comics/group/comic.pdf. Se desbloquea
+              cuando ya se han visto los cuatro cómics individuales.
 
   CÓMO AÑADIR LA CANCIÓN DE ALGUIEN:
-    1. Sube el mp3 a assets/audio/ (por ejemplo assets/audio/carlos.mp3).
+    1. Sube el mp3 o el ogg a assets/audio/ (por ejemplo assets/audio/carlos.ogg).
     2. Comprueba que el campo "audio" de esa persona apunta a esa ruta.
 
+  CÓMO AÑADIR UN VÍDEO EN VEZ DE CANCIÓN:
+    1. Sube el mp4 a assets/video/ (por ejemplo assets/video/dientes.mp4).
+    2. Pon esa ruta en el campo "video" de esa persona.
+
   CÓMO AÑADIR EL CÓMIC DE ALGUIEN:
-    1. Sube las imágenes a assets/comics/<id>/ (por ejemplo
-       assets/comics/carlos/1.jpg, assets/comics/carlos/2.jpg...).
-    2. Añade esas rutas, en orden, a la lista "comics" de esa persona.
+    1. Sube el PDF de 10 páginas a assets/comics/<id>/comic.pdf.
+    2. Comprueba que el campo "comicPdf" de esa persona apunta a esa ruta.
 
   CÓMO AÑADIR LA LETRA DE LA CORTINILLA:
     1. Crea assets/lyrics/<id>.txt (por ejemplo assets/lyrics/carlos.txt).
@@ -44,41 +57,45 @@ const CONFIG = {
       id: "hungryman",
       name: "Hungryman",
       color: "#ff5d8f",
-      audio: "assets/audio/hungryman.mp3",
+      audio: "assets/audio/hungryman.ogg",
+      video: null,
       lyrics: "assets/lyrics/hungryman.txt",
       songPhotos: [],
-      comics: []
+      comicPdf: "assets/comics/hungryman/comic.pdf"
     },
     {
       id: "dientes",
       name: "Dientes",
       color: "#4fb6ff",
-      audio: "assets/audio/dientes.mp3",
+      audio: null,
+      video: "assets/video/dientes.mp4",
       lyrics: "assets/lyrics/dientes.txt",
       songPhotos: [],
-      comics: []
+      comicPdf: "assets/comics/dientes/comic.pdf"
     },
     {
       id: "carlos",
       name: "Carlos",
       color: "#6fe0a0",
-      audio: "assets/audio/carlos.mp3",
+      audio: "assets/audio/carlos.ogg",
+      video: null,
       lyrics: "assets/lyrics/carlos.txt",
       songPhotos: [],
-      comics: []
+      comicPdf: "assets/comics/carlos/comic.pdf"
     },
     {
       id: "daviles",
       name: "Daviles",
       color: "#ffcf56",
-      audio: "assets/audio/daviles.mp3",
+      audio: "assets/audio/daviles.ogg",
+      video: null,
       lyrics: "assets/lyrics/daviles.txt",
       songPhotos: [],
-      comics: []
+      comicPdf: "assets/comics/daviles/comic.pdf"
     }
   ],
   groupComic: {
-    comics: []
+    pdf: "assets/comics/group/comic.pdf"
   }
 };
 

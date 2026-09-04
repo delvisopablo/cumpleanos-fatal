@@ -32,15 +32,24 @@
         <button class="primary-button" id="play-song" type="button">▶ Escuchar tu canción</button>
         <a class="secondary-button" href="../index.html">Ver la tarta completa</a>
       </div>
+      <video class="personal-video hidden" id="personal-video" playsinline controls></video>
     </section>
     <section class="person-card person-comic" aria-labelledby="comic-title">
       <h2 id="comic-title">El cómic de <span id="comic-name">Daviles</span></h2>
       <p>Tu historia especial de cumpleaños.</p>
       <div class="personal-gallery" id="personal-gallery"></div>
+      <div class="personal-comic-nav" id="personal-comic-nav" hidden>
+        <button id="personal-prev-btn" type="button" aria-label="Página anterior">‹</button>
+        <span id="personal-comic-counter"></span>
+        <button id="personal-zoom-btn" type="button" aria-label="Ampliar página" aria-pressed="false" hidden>🔍</button>
+        <button id="personal-next-btn" type="button" aria-label="Página siguiente">›</button>
+      </div>
     </section>
   </main>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="../js/config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <script src="../js/comic-viewer.js"></script>
   <script src="../js/persona.js"></script>
 </body>
 </html>

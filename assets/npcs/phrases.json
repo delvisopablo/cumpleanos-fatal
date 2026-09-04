@@ -1,20 +1,31 @@
 {
   "npcs": [
     {"id":"npc-01","name":"Josangre","phrases":["Esque tambien tuuuu","Davilin, ¿Has pedido ya un deseito?", "estadisticamente es improbable que le toque al mismo el trozo de tarta."]},
-    {"id":"npc-02","name":"Oskar","phrases":["Alguien ha visto el winston largo ?? ","¡Feliz cumple, equipo!","Prometo dejar algo de tarta."]},
+    {"id":"npc-02","name":"Oskar","phrases":["Alguien ha visto el winston largo ?? ","que feliz estoy de veros aqui todos FAMILIAAAA","Prometo dejar algo de tarta."]},
     {"id":"npc-03","name":"Lu","phrases":["Oskaaar!! te tengo dicho que compartas tabaco con todos los invitados","alguien ha visto el winston largo de mi niño?","Si me llegais a avisar con tiempo hubiese hecho 6 tartas"]},
-    {"id":"npc-04","name":"Santi","phrases":["QUE SOPLEIS YAAAAA","si hace falta yo conduzco a la vuelta","Esto me recuerda a las fiestas de miranda"]},
+    {"id":"npc-04","name":"Santi","phrases":["QUE SOPLEIS YAAAAA","QUE VEN MIS OJITOOOOS","Esto me recuerda a las fiestas de miranda"]},
     {"id":"npc-05","name":"Rase","phrases":["Quien tiene la musica? teneis que escuchar un disco que se llama harry potter era del atleti ","Jodeeer me he dejado la poop en el coche.. ESPERAD, NO OS MOVAIS","de verdad os digo que la Vicky luengo se sale en la ultima de sorogoyen"]},
     {"id":"npc-06","name":"Aguado","phrases":["El vino este esta picao","yo de verdad que no entiendo eso que haceis de fumar.. si luego las cosas no te saben a lo que te tienen que saber","Hoy no se cuentan las calorías!!"]},
     {"id":"npc-07","name":"Carlota","phrases":["¡Menudo fiestón! pero me falta que suene la metrika un poco","Hoy dije que no fumaria pero.. he encontrado una cajetilla de winston largo que me pone ojitos"]},
-    {"id":"npc-08","name":"Ludekas","phrases":["esto se puede meter en el strava? ","Tengo buen presentimiento.","¿Otra vuelta a la mesa?"]},
-    {"id":"npc-09","name":"Claudia","phrases":["Las velas brillan muchísimo.","Ese mantel es muy de celebración.","Yo digo que sale verde."]},
-    {"id":"npc-10","name":"Hugo","phrases":["He venido con mi mejor sombrero.","Sopla fuerte, pero fuerte de verdad.","La ronda va por nosotros."]},
-    {"id":"npc-11","name":"Elena","phrases":["Qué ganas de ver las fotos.","Esta canción me la sé.","¡No dejéis escapar la tarta!"]},
-    {"id":"npc-12","name":"Bruno","phrases":["Mi barba aprueba esta fiesta.","Yo vigilo las bebidas.","La ruleta nunca miente."]},
-    {"id":"npc-13","name":"Toño","phrases":["la verdad que esto ya me aburre","a mi me podeis guardar dos trocitos de tarta? que voy al baño"]},
-    {"id":"npc-14","name":"Leo","phrases":["¿Has hablado con todos?","Somos dieciséis animando.","La cámara nos sigue el ritmo."]},
-    {"id":"npc-15","name":"Vera","phrases":["La cortinilla empieza en tres, dos…","Qué bonitas quedan las fotos.","Voy a dar otra vuelta."]},
-    {"id":"npc-16","name":"Izan","phrases":["Último en llegar, primero en bailar.","Necesito esa receta.","¡Cumpleaños fatal, pero de los buenos!"]}
+    {"id":"npc-08","name":"Ludekas","phrases":["esto se puede meter en el strava? ","Tengo buen presentimiento. HOY SE LIAAA","Agua con gas no tienes ?? "]},
+
+    {"id":"npc-09","name":"souto","phrases":["Cacho me dijo que sus amigos son muy simpaticos.. quiza se le olvido decirme que eran unos borrachos","Ese mantel es muy de celebración.","Ah! que esto no era un gender reveal?"]},
+    {"id":"npc-10","name":"rodri","phrases":["El otro dia casi piso a mico.. espero que daviles no se entere","yo me ocupo de la barbacoa si hace falta","estoy caliente y no es por el sol.. alguien quier ir a dar un paseo? "]},
+
+    {"id":"npc-11","name":"meri","phrases":["Qué ganas de ver las fotos. espero salir con los ojos abiertos","Esta canción no me la sé, quien la ha puesto ? ","he visto un paquete de winston por ahi hace un rato.. ahora ya no sé donde está"]},
+
+    {"id":"npc-12","name":"pol","phrases":["joder tu! traía un hambre que daba calambre.. esto esta cojonudo","Yo vigilo las bebidas. tocamos a 3 cerves por cabeza","tenía yo ganas de tirarme un pedo y que lo olierais todos"]},
+    {"id":"npc-13","name":"Toño","phrases":["desde las alturas se ve todo distinto","a mi me podeis guardar dos trocitos de tarta? que voy al baño"]},
+
+    {"id":"npc-14","name":"mario","phrases":["¿Has hablado con todos para organizar las magic?","Hungryman me has robao el sitio cabrón","las fotos que las tire alguien con iphone que se ven mejor"]},
+    {"id":"npc-15","name":"marina","phrases":["La cortinilla empieza en tres, dos…","Qué bonitas quedan las fotos.","Voy a dar otra vuelta."]},
+    {"id":"npc-16","name":"mico","phrases":["Último en llegar, primero en bailar.","Necesito esa receta.","¡Cumpleaños fatal, pero de los buenos!"]},
+    {"id":"npc-17","name":"esther","phrases":["Qué ganas de ver las fotos.","Esta canción me la sé.","¡No dejéis escapar la tarta!"]},
+    {"id":"npc-18","name":"topo","phrases":["Mi barba aprueba esta fiesta.","Yo vigilo las bebidas.","La ruleta nunca miente."]},
+    {"id":"npc-19","name":"gloria","phrases":["desde las alturas se ve todo distinto","a mi me podeis guardar dos trocitos de tarta? que voy al baño"]},
+    {"id":"npc-20","name":"néstor","phrases":["¿Has hablado con todos?","Somos dieciséis animando.","La cámara nos sigue el ritmo."]},
+    {"id":"npc-21","name":"amalia","phrases":["La cortinilla empieza en tres, dos…","Qué bonitas quedan las fotos.","Voy a dar otra vuelta."]},
+    {"id":"npc-22","name":"Pauli","phrases":["Último en llegar, primero en bailar.","Necesito esa receta.","¡Cumpleaños fatal, pero de los buenos!"]},
+    {"id":"npc-23","name":"cacho","phrases":["Último en llegar, primero en bailar.","Necesito esa receta.","¡Cumpleaños fatal, pero de los buenos!"]}
   ]
 }

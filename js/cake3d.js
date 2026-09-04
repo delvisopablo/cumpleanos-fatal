@@ -716,48 +716,60 @@
     };
   }
 
-  function createCrowd(scene) {
-    const styles = [
-      { skin: 0xd99b72, clothes: 0x4fb6ff, accent: 0xffcf56, accessory: "cap", beard: true },
-      { skin: 0x7e4b32, clothes: 0xff5d8f, accent: 0x6fe0a0, accessory: "hat", skirt: true },
-      { skin: 0xf0bf99, clothes: 0x6fe0a0, accent: 0xc58bff, beard: true },
-      { skin: 0xb86f4f, clothes: 0xffcf56, accent: 0xff5d8f, accessory: "cap", skirt: true },
-      { skin: 0xefd0b2, clothes: 0xc58bff, accent: 0x4fb6ff, accessory: "hat" },
-      { skin: 0x8f573c, clothes: 0xf06b49, accent: 0xffcf56, skirt: true },
-      { skin: 0xc9825b, clothes: 0x3fa58b, accent: 0xff7daf, accessory: "cap" },
-      { skin: 0xf2c5a4, clothes: 0x945ee8, accent: 0xffcf56, skirt: true, accessory: "hat" },
-      { skin: 0x6f432f, clothes: 0x348bd1, accent: 0xffcf56, beard: true, accessory: "hat" },
-      { skin: 0xe0a47c, clothes: 0xdc4779, accent: 0x73e0bd, skirt: true, accessory: "cap" },
-      { skin: 0xa96346, clothes: 0x89bd45, accent: 0xe96b4c, beard: true },
-      { skin: 0xf1c8aa, clothes: 0xf0a43c, accent: 0x6f7bea, skirt: true, accessory: "hat" },
-      { skin: 0x80503a, clothes: 0x9b68d7, accent: 0xffdf76, accessory: "cap" },
-      { skin: 0xd28e68, clothes: 0x36a69a, accent: 0xff719d, skirt: true },
-      { skin: 0xf3d0b4, clothes: 0xbd4e68, accent: 0x55b9f1, beard: true, accessory: "cap" },
-      { skin: 0x9d6145, clothes: 0xe4b63f, accent: 0x8f65dd, skirt: true, accessory: "hat" },
-    ];
+  const WALKER_STYLES = [
+    { skin: 0xd99b72, clothes: 0x4fb6ff, accent: 0xffcf56, accessory: "cap", beard: true },
+    { skin: 0x7e4b32, clothes: 0xff5d8f, accent: 0x6fe0a0, accessory: "hat", skirt: true },
+    { skin: 0xf0bf99, clothes: 0x6fe0a0, accent: 0xc58bff, beard: true },
+    { skin: 0xb86f4f, clothes: 0xffcf56, accent: 0xff5d8f, accessory: "cap", skirt: true },
+    { skin: 0xefd0b2, clothes: 0xc58bff, accent: 0x4fb6ff, accessory: "hat" },
+    { skin: 0x8f573c, clothes: 0xf06b49, accent: 0xffcf56, skirt: true },
+    { skin: 0xc9825b, clothes: 0x3fa58b, accent: 0xff7daf, accessory: "cap" },
+    { skin: 0xf2c5a4, clothes: 0x945ee8, accent: 0xffcf56, skirt: true, accessory: "hat" },
+    { skin: 0x6f432f, clothes: 0x348bd1, accent: 0xffcf56, beard: true, accessory: "hat" },
+    { skin: 0xe0a47c, clothes: 0xdc4779, accent: 0x73e0bd, skirt: true, accessory: "cap" },
+    { skin: 0xa96346, clothes: 0x89bd45, accent: 0xe96b4c, beard: true },
+    { skin: 0xf1c8aa, clothes: 0xf0a43c, accent: 0x6f7bea, skirt: true, accessory: "hat" },
+    { skin: 0x80503a, clothes: 0x9b68d7, accent: 0xffdf76, accessory: "cap" },
+    { skin: 0xd28e68, clothes: 0x36a69a, accent: 0xff719d, skirt: true },
+    { skin: 0xf3d0b4, clothes: 0xbd4e68, accent: 0x55b9f1, beard: true, accessory: "cap" },
+    { skin: 0x9d6145, clothes: 0xe4b63f, accent: 0x8f65dd, skirt: true, accessory: "hat" },
+  ];
+  const DEFAULT_NPC_COUNT = WALKER_STYLES.length;
 
-    return styles.map((style, index) => {
-      const mesh = createWalker({ ...style, scale: 0.88 + (index % 3) * 0.045 });
-      const id = `npc-${String(index + 1).padStart(2, "0")}`;
-      mesh.userData.npcId = id;
-      scene.add(mesh);
-      return {
-        id,
-        name: `Invitado ${index + 1}`,
-        mesh,
-        phase: (index / styles.length) * TAU + (index % 2 ? 0.18 : 0),
-        speed: 0.075 + (index % 4) * 0.009,
-        radiusX: 10.9 + (index % 3) * 0.72,
-        radiusZ: 7.9 + ((index + 1) % 3) * 0.52,
-        direction: index % 3 === 0 ? -1 : 1,
-        kind: style.skirt ? "girl" : "guest",
-        accessory: style.accessory || (style.beard ? "beard" : "none"),
-        phrases: [],
-        paused: false,
-        dialogElement: null,
-        dialogTimer: null,
-      };
-    });
+  // Cada invitado usa un estilo de la paleta de arriba; a partir del
+  // decimosexto se reutilizan los mismos disfraces con una talla distinta
+  // para que la cantidad de invitados pueda crecer con phrases.json.
+  function buildWalkerEntry(scene, index, count) {
+    const style = WALKER_STYLES[index % WALKER_STYLES.length];
+    const cycle = Math.floor(index / WALKER_STYLES.length);
+    const mesh = createWalker({ ...style, scale: 0.88 + (index % 3) * 0.045 + cycle * 0.02 });
+    const id = `npc-${String(index + 1).padStart(2, "0")}`;
+    mesh.userData.npcId = id;
+    scene.add(mesh);
+    return {
+      id,
+      name: `Invitado ${index + 1}`,
+      mesh,
+      phase: (index / count) * TAU + (index % 2 ? 0.18 : 0),
+      speed: 0.075 + (index % 4) * 0.009,
+      radiusX: 10.9 + (index % 3) * 0.72 + cycle * 0.9,
+      radiusZ: 7.9 + ((index + 1) % 3) * 0.52 + cycle * 0.6,
+      direction: index % 3 === 0 ? -1 : 1,
+      kind: style.skirt ? "girl" : "guest",
+      accessory: style.accessory || (style.beard ? "beard" : "none"),
+      phrases: [],
+      paused: false,
+      dialogElement: null,
+      dialogTimer: null,
+    };
+  }
+
+  function createCrowd(scene, count) {
+    const list = [];
+    for (let index = 0; index < count; index++) {
+      list.push(buildWalkerEntry(scene, index, count));
+    }
+    return list;
   }
 
   function updateWalker(walker, time, camera) {
@@ -1062,7 +1074,7 @@
     const scene = new THREE.Scene();
     createRoom(scene);
     createTable(scene);
-    const walkers = createCrowd(scene);
+    const walkers = createCrowd(scene, DEFAULT_NPC_COUNT);
 
     scene.add(new THREE.HemisphereLight(0xeadfff, 0x27132f, 1.4));
     const keyLight = new THREE.DirectionalLight(0xffe7bf, 3.2);
@@ -1136,8 +1148,29 @@
     const clock = new THREE.Clock();
     let activeNpc = null;
 
+    function disposeWalkerMesh(walker) {
+      hideNpcDialog(walker);
+      scene.remove(walker.mesh);
+      walker.mesh.traverse((child) => {
+        if (child.geometry) child.geometry.dispose();
+        if (Array.isArray(child.material)) child.material.forEach((material) => material.dispose());
+        else if (child.material) child.material.dispose();
+      });
+    }
+
+    // El paseo se dimensiona según cuántos invitados haya en phrases.json,
+    // no en un número fijo: si cambia el recuento se reconstruye el grupo.
+    function resizeCrowd(count) {
+      if (!Number.isFinite(count) || count <= 0 || count === walkers.length) return;
+      if (activeNpc && !walkers.includes(activeNpc)) activeNpc = null;
+      walkers.forEach(disposeWalkerMesh);
+      walkers.length = 0;
+      walkers.push(...createCrowd(scene, count));
+    }
+
     function setNpcData(data) {
       const entries = Array.isArray(data && data.npcs) ? data.npcs : [];
+      if (entries.length > 0) resizeCrowd(entries.length);
       const byId = new Map(entries.map((entry) => [entry.id, entry]));
       walkers.forEach((walker) => {
         const entry = byId.get(walker.id);

@@ -28,7 +28,7 @@
   let cake = null;
   let activeCandleId = null;
   let spinning = false;
-  let songPlaying = false;
+  let mediaPlaying = false;
   let allBlown = false;
   let currentAudio = null;
   let nomSoundCount = 0;
@@ -46,8 +46,15 @@
 
   let modalPerson = null;
   let modalKind = null;
-  let modalIndex = 0;
   let modalReturnFocus = null;
+  let modalPdfDoc = null;
+  let modalPdfUrl = null;
+  let modalPageNum = 1;
+  let modalNumPages = 0;
+  let modalZoomed = false;
+  let modalMissingHtml = "";
+  let modalLoadSeq = 0;
+  let modalRenderSeq = 0;
   const viewedComicIds = new Set();
   let groupComicUnlocked = false;
 
@@ -172,12 +179,12 @@
   function updateSpinButton() {
     const button = document.getElementById("spin-btn");
     const label = button.querySelector("span:last-child");
-    const blocked = spinning || songPlaying || Boolean(activeCandleId) || allBlown || !cake;
+    const blocked = spinning || mediaPlaying || Boolean(activeCandleId) || allBlown || !cake;
     button.disabled = blocked;
     button.hidden = allBlown;
 
     if (allBlown) label.textContent = "A comer";
-    else if (songPlaying) label.textContent = "Escuchando…";
+    else if (mediaPlaying) label.textContent = "Reproduciendo…";
     else if (spinning) label.textContent = "Girando…";
     else if (activeCandleId) label.textContent = "Sopla la vela";
     else label.textContent = "Girar la tarta";
@@ -292,6 +299,15 @@
     );
   }
 
+  function guessAudioMime(path) {
+    const ext = String(path || "").split(".").pop().toLowerCase();
+    if (ext === "mp3") return "audio/mpeg";
+    if (ext === "ogg") return "audio/ogg";
+    if (ext === "wav") return "audio/wav";
+    if (ext === "m4a" || ext === "aac") return "audio/mp4";
+    return "";
+  }
+
   function playSong(id) {
     const person = personById(id);
     const lyricsPromise = loadLyrics(person);
@@ -307,8 +323,7 @@
       let finished = false;
       let missingStarted = false;
       let noticeTimer = null;
-
-      const loadTimer = setTimeout(() => handleMissing(), AUDIO_LOAD_TIMEOUT_MS);
+      let loadTimer = null;
 
       function cleanup() {
         clearTimeout(loadTimer);
@@ -331,6 +346,7 @@
       }
 
       async function handleMetadata() {
+        clearTimeout(loadTimer);
         const lines = await lyricsPromise;
         if (finished || currentAudio !== audio) return;
         startSongExperience(person, lines, audio.duration, () => audio.currentTime);
@@ -346,6 +362,24 @@
         noticeTimer = setTimeout(() => finish({ played: false, missing: true }), MISSING_AUDIO_NOTICE_MS);
       }
 
+      function handleUnsupported() {
+        if (finished || missingStarted) return;
+        missingStarted = true;
+        clearTimeout(loadTimer);
+        audio.pause();
+        hideSongExperience(false);
+        showToast(`🎵 Tu navegador no puede reproducir la canción de ${person.displayName || person.name} (formato no compatible). La fiesta continúa.`, MISSING_AUDIO_NOTICE_MS);
+        noticeTimer = setTimeout(() => finish({ played: false, missing: true, unsupported: true }), MISSING_AUDIO_NOTICE_MS);
+      }
+
+      const mime = guessAudioMime(person.audio);
+      if (mime && typeof audio.canPlayType === "function" && !audio.canPlayType(mime)) {
+        handleUnsupported();
+        return;
+      }
+
+      loadTimer = setTimeout(() => handleMissing(), AUDIO_LOAD_TIMEOUT_MS);
+
       audio.addEventListener("ended", handleEnded);
       audio.addEventListener("error", handleMissing);
       audio.addEventListener("loadedmetadata", handleMetadata, { once: true });
@@ -354,6 +388,97 @@
 
       try {
         const playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(handleMissing);
+        }
+      } catch (error) {
+        handleMissing();
+      }
+    });
+  }
+
+  function playVideo(id) {
+    const person = personById(id);
+    return new Promise((resolve) => {
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.removeAttribute("src");
+        currentAudio = null;
+      }
+      hideSongExperience(false);
+
+      const panel = document.getElementById("video-experience");
+      const video = document.getElementById("birthday-video");
+      let finished = false;
+      let missingStarted = false;
+      let noticeTimer = null;
+      let loadTimer = null;
+
+      function hidePanel() {
+        panel.classList.add("hidden");
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      }
+
+      function cleanup() {
+        clearTimeout(loadTimer);
+        clearTimeout(noticeTimer);
+        video.removeEventListener("ended", handleEnded);
+        video.removeEventListener("error", handleMissing);
+        video.removeEventListener("loadedmetadata", handleReady);
+      }
+
+      function finish(result) {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        resolve(result);
+      }
+
+      function handleEnded() {
+        hidePanel();
+        finish({ played: true, missing: false });
+      }
+
+      function handleReady() {
+        clearTimeout(loadTimer);
+        panel.classList.remove("hidden");
+      }
+
+      function handleMissing() {
+        if (finished || missingStarted) return;
+        missingStarted = true;
+        clearTimeout(loadTimer);
+        hidePanel();
+        showToast(`🎬 El vídeo de ${person.displayName || person.name} aún no está subido. La fiesta continúa.`, MISSING_AUDIO_NOTICE_MS);
+        noticeTimer = setTimeout(() => finish({ played: false, missing: true }), MISSING_AUDIO_NOTICE_MS);
+      }
+
+      function handleUnsupported() {
+        if (finished || missingStarted) return;
+        missingStarted = true;
+        clearTimeout(loadTimer);
+        hidePanel();
+        showToast(`🎬 Tu navegador no puede reproducir el vídeo de ${person.displayName || person.name}. La fiesta continúa.`, MISSING_AUDIO_NOTICE_MS);
+        noticeTimer = setTimeout(() => finish({ played: false, missing: true, unsupported: true }), MISSING_AUDIO_NOTICE_MS);
+      }
+
+      if (typeof video.canPlayType === "function" && !video.canPlayType("video/mp4")) {
+        handleUnsupported();
+        return;
+      }
+
+      loadTimer = setTimeout(() => handleMissing(), AUDIO_LOAD_TIMEOUT_MS);
+
+      video.addEventListener("ended", handleEnded);
+      video.addEventListener("error", handleMissing);
+      video.addEventListener("loadedmetadata", handleReady, { once: true });
+      video.preload = "auto";
+      video.src = person.video;
+
+      try {
+        const playPromise = video.play();
         if (playPromise && typeof playPromise.catch === "function") {
           playPromise.catch(handleMissing);
         }
@@ -532,7 +657,7 @@
   }
 
   function processMicrophoneLevel(level, now = performance.now()) {
-    if (!holdingBlow || micState !== "active" || !activeCandleId || songPlaying || spinning) {
+    if (!holdingBlow || micState !== "active" || !activeCandleId || mediaPlaying || spinning) {
       breathAboveSince = null;
       return false;
     }
@@ -619,7 +744,7 @@
   }
 
   function startBlowHold() {
-    if (!activeCandleId || state[activeCandleId].blown || spinning || songPlaying || holdingBlow) return false;
+    if (!activeCandleId || state[activeCandleId].blown || spinning || mediaPlaying || holdingBlow) return false;
     holdingBlow = true;
     document.getElementById("blow-btn").classList.add("is-charging");
     openMicrophoneForHold();
@@ -635,30 +760,34 @@
   function handleBlowSignal(source) {
     const validSource = (holdingBlow && (source === "microphone" || source === "fallback")) || (TEST_MODE && source === "test");
     if (!validSource) return Promise.resolve(false);
-    if (!activeCandleId || songPlaying || spinning || state[activeCandleId].blown) return Promise.resolve(false);
+    if (!activeCandleId || mediaPlaying || spinning || state[activeCandleId].blown) return Promise.resolve(false);
     return blowOutCandle(activeCandleId);
   }
 
   async function blowOutCandle(id) {
     const itemState = state[id];
-    if (!itemState || itemState.blown || activeCandleId !== id || songPlaying) return false;
+    if (!itemState || itemState.blown || activeCandleId !== id || mediaPlaying) return false;
 
     const person = personById(id);
     itemState.blown = true;
     activeCandleId = null;
-    songPlaying = true;
+    mediaPlaying = true;
     breathAboveSince = null;
     releaseBlowHold();
     setBlowUiVisible(false);
     updateAllLegend();
     updateSpinButton();
-    setStatus(`¡Vela de ${person.displayName || person.name} apagada! Ahora suena su canción 🎶`);
+    setStatus(
+      person.video
+        ? `¡Vela de ${person.displayName || person.name} apagada! Ahora se reproduce su vídeo 🎬`
+        : `¡Vela de ${person.displayName || person.name} apagada! Ahora suena su canción 🎶`
+    );
 
-    const songPromise = playSong(id);
+    const mediaExperiencePromise = person.video ? playVideo(id) : playSong(id);
     try {
-      await Promise.all([cake.blowOutCandle(id), songPromise]);
+      await Promise.all([cake.blowOutCandle(id), mediaExperiencePromise]);
     } finally {
-      songPlaying = false;
+      mediaPlaying = false;
     }
 
     const remaining = CONFIG.people.filter((candidate) => !state[candidate.id].blown);
@@ -666,7 +795,7 @@
       allBlown = true;
       enterBitePhase();
     } else {
-      setStatus(`Canción terminada. Quedan ${remaining.length} ${remaining.length === 1 ? "vela" : "velas"}; gira de nuevo.`);
+      setStatus(`Quedan ${remaining.length} ${remaining.length === 1 ? "vela" : "velas"}; gira de nuevo.`);
       updateSpinButton();
     }
     return true;
@@ -682,7 +811,7 @@
   }
 
   async function onSpinClick() {
-    if (spinning || songPlaying || activeCandleId || allBlown || !cake) return null;
+    if (spinning || mediaPlaying || activeCandleId || allBlown || !cake) return null;
     const excludedIds = CONFIG.people
       .filter((person) => state[person.id].blown || state[person.id].eaten)
       .map((person) => person.id);
@@ -720,7 +849,7 @@
 
   async function onSliceChosen(id) {
     const itemState = state[id];
-    if (!allBlown || songPlaying || biteInProgress || !itemState || !itemState.blown || itemState.eaten || itemState.biting) return null;
+    if (!allBlown || mediaPlaying || biteInProgress || !itemState || !itemState.blown || itemState.eaten || itemState.biting) return null;
 
     biteInProgress = true;
     itemState.biting = true;
@@ -762,12 +891,15 @@
   }
 
   function openComic(id) {
-    modalPerson = personById(id);
+    const person = personById(id);
+    modalPerson = person;
     modalKind = "individual";
-    modalIndex = 0;
     modalReturnFocus = document.activeElement;
-    document.getElementById("modal-title").textContent = `El cómic de ${modalPerson.displayName || modalPerson.name}`;
-    renderModalPage();
+    document.getElementById("modal-title").textContent = `El cómic de ${person.displayName || person.name}`;
+    openModalComic(person.comicPdf, `<span class="big-emoji" aria-hidden="true">📔✨</span>
+      <p>El cómic de <strong>${person.displayName || person.name}</strong> está de camino.</p>
+      <p>Se mostrará aquí cuando subas el PDF a<br>
+      <code>assets/comics/${person.id}/comic.pdf</code>.</p>`);
     const modal = document.getElementById("comic-modal");
     modal.classList.remove("hidden");
     document.getElementById("modal-close").focus();
@@ -784,73 +916,108 @@
 
   function openGroupComic() {
     if (!groupComicUnlocked) return false;
-    modalPerson = {
-      id: "group",
-      name: "los cuatro",
-      comics: Array.isArray(CONFIG.groupComic && CONFIG.groupComic.comics)
-        ? CONFIG.groupComic.comics
-        : [],
-    };
+    modalPerson = null;
     modalKind = "group";
-    modalIndex = 0;
     modalReturnFocus = document.activeElement;
     document.getElementById("modal-title").textContent = "Cómic final · La historia conjunta";
-    renderModalPage();
+    openModalComic(CONFIG.groupComic && CONFIG.groupComic.pdf, `<span class="big-emoji" aria-hidden="true">📚✨</span>
+      <p>El <strong>cómic final de los cuatro</strong> está de camino.</p>
+      <p>Se mostrará aquí cuando subas el PDF a<br>
+      <code>assets/comics/group/comic.pdf</code>.</p>`);
     document.getElementById("comic-modal").classList.remove("hidden");
     document.getElementById("modal-close").focus();
     return true;
   }
 
-  function renderModalPage() {
-    const gallery = document.getElementById("modal-gallery");
-    const navigation = document.getElementById("modal-nav");
-    const counter = document.getElementById("modal-counter");
-    const comics = modalPerson.comics || [];
-    gallery.innerHTML = "";
+  async function openModalComic(url, missingHtml) {
+    modalLoadSeq += 1;
+    const seq = modalLoadSeq;
+    modalPdfDoc = null;
+    modalPdfUrl = url || null;
+    modalPageNum = 1;
+    modalNumPages = 0;
+    modalZoomed = false;
+    modalMissingHtml = missingHtml;
+    document.getElementById("modal-content").classList.remove("is-zoomed");
 
-    if (comics.length === 0) {
-      const placeholder = document.createElement("div");
-      placeholder.className = "comic-placeholder";
-      placeholder.innerHTML = modalKind === "group"
-        ? `<span class="big-emoji" aria-hidden="true">📚✨</span>
-          <p>El <strong>cómic final de los cuatro</strong> está de camino.</p>
-          <p>Se mostrará aquí cuando subas sus imágenes a<br>
-          <code>assets/comics/group/</code> y las añadas en <code>CONFIG.groupComic.comics</code>.</p>`
-        : `<span class="big-emoji" aria-hidden="true">📔✨</span>
-          <p>El cómic de <strong>${modalPerson.displayName || modalPerson.name}</strong> está de camino.</p>
-          <p>Se mostrará aquí cuando subas sus imágenes a<br>
-          <code>assets/comics/${modalPerson.id}/</code> y las añadas en <code>js/config.js</code>.</p>`;
-      gallery.appendChild(placeholder);
-      navigation.classList.add("single-page");
-      counter.textContent = "";
+    if (!url || !global.ComicViewer || !global.ComicViewer.available()) {
+      renderComicMissing();
       return;
     }
 
-    const image = document.createElement("img");
-    image.src = comics[modalIndex];
-    image.alt = modalKind === "group"
-      ? `Página ${modalIndex + 1} del cómic final de los cuatro`
-      : `Página ${modalIndex + 1} del cómic de ${modalPerson.displayName || modalPerson.name}`;
-    image.onerror = () => {
-      gallery.innerHTML = `
-        <div class="comic-placeholder">
-          <span class="big-emoji" aria-hidden="true">🖼️❓</span>
-          <p>No se encuentra la imagen:<br><code>${comics[modalIndex]}</code></p>
-          <p>Comprueba que el archivo esté en esa ruta exacta.</p>
-        </div>`;
-    };
-    gallery.appendChild(image);
+    renderComicLoading();
+    const doc = await global.ComicViewer.loadDocument(url);
+    if (seq !== modalLoadSeq) return;
+    if (!doc) {
+      renderComicMissing();
+      return;
+    }
+    modalPdfDoc = doc;
+    modalNumPages = doc.numPages;
+    await renderModalPage();
+  }
 
-    navigation.classList.toggle("single-page", comics.length <= 1);
-    counter.textContent = comics.length > 1 ? `${modalIndex + 1} / ${comics.length}` : "";
-    document.getElementById("prev-btn").disabled = modalIndex === 0;
-    document.getElementById("next-btn").disabled = modalIndex === comics.length - 1;
+  function renderComicMissing() {
+    document.getElementById("modal-gallery").innerHTML = `<div class="comic-placeholder">${modalMissingHtml}</div>`;
+    updateModalNav();
+  }
+
+  function renderComicLoading() {
+    document.getElementById("modal-gallery").innerHTML = `<div class="comic-loading">Cargando cómic…</div>`;
+    updateModalNav();
+  }
+
+  function comicPageLabel() {
+    return modalKind === "group"
+      ? `Página ${modalPageNum} del cómic final de los cuatro`
+      : `Página ${modalPageNum} del cómic de ${modalPerson ? (modalPerson.displayName || modalPerson.name) : ""}`;
+  }
+
+  async function renderModalPage() {
+    if (!modalPdfDoc) return;
+    modalRenderSeq += 1;
+    const seq = modalRenderSeq;
+    const gallery = document.getElementById("modal-gallery");
+    const targetWidth = Math.max(240, Math.min(720, gallery.clientWidth || 480));
+    try {
+      const canvas = await global.ComicViewer.renderPage(modalPdfDoc, modalPageNum, {
+        targetWidth,
+        zoomed: modalZoomed,
+      });
+      if (seq !== modalRenderSeq) return;
+      canvas.setAttribute("role", "img");
+      canvas.setAttribute("aria-label", comicPageLabel());
+      gallery.innerHTML = "";
+      gallery.appendChild(canvas);
+    } catch (error) {
+      if (seq !== modalRenderSeq) return;
+      renderComicMissing();
+      return;
+    }
+    updateModalNav();
+  }
+
+  function updateModalNav() {
+    const navigation = document.getElementById("modal-nav");
+    const counter = document.getElementById("modal-counter");
+    const prevBtn = document.getElementById("prev-btn");
+    const nextBtn = document.getElementById("next-btn");
+    const zoomBtn = document.getElementById("zoom-btn");
+    const hasPdf = Boolean(modalPdfDoc) && modalNumPages > 0;
+
+    navigation.classList.toggle("single-page", !hasPdf);
+    counter.textContent = hasPdf && modalNumPages > 1 ? `${modalPageNum} / ${modalNumPages}` : "";
+    prevBtn.disabled = !hasPdf || modalPageNum <= 1;
+    nextBtn.disabled = !hasPdf || modalPageNum >= modalNumPages;
+    zoomBtn.hidden = !hasPdf;
+    zoomBtn.setAttribute("aria-pressed", modalZoomed ? "true" : "false");
   }
 
   function closeComic() {
     const modal = document.getElementById("comic-modal");
     if (modal.classList.contains("hidden")) return;
     modal.classList.add("hidden");
+    modalLoadSeq += 1;
     modalPerson = null;
     modalKind = null;
     if (modalReturnFocus && typeof modalReturnFocus.focus === "function") modalReturnFocus.focus();
@@ -863,16 +1030,22 @@
       if (event.key === "Escape") closeComic();
     });
     document.getElementById("prev-btn").addEventListener("click", () => {
-      if (modalIndex > 0) {
-        modalIndex -= 1;
+      if (modalPdfDoc && modalPageNum > 1) {
+        modalPageNum -= 1;
         renderModalPage();
       }
     });
     document.getElementById("next-btn").addEventListener("click", () => {
-      if (modalPerson && modalIndex < modalPerson.comics.length - 1) {
-        modalIndex += 1;
+      if (modalPdfDoc && modalPageNum < modalNumPages) {
+        modalPageNum += 1;
         renderModalPage();
       }
+    });
+    document.getElementById("zoom-btn").addEventListener("click", () => {
+      if (!modalPdfDoc) return;
+      modalZoomed = !modalZoomed;
+      document.getElementById("modal-content").classList.toggle("is-zoomed", modalZoomed);
+      renderModalPage();
     });
     document.getElementById("group-comic-btn").addEventListener("click", openGroupComic);
   }
@@ -901,6 +1074,12 @@
       previewSong: previewSongForTest,
       talkToNpc: (id) => cake && cake.talkToNpc(id),
       setBiteAudioDuration: setBiteAudioDurationForTest,
+      skipMedia: () => {
+        if (currentAudio) currentAudio.dispatchEvent(new Event("ended"));
+        const video = document.getElementById("birthday-video");
+        if (video) video.dispatchEvent(new Event("ended"));
+        return true;
+      },
       openGroupComic,
       closeComic,
       getState() {
@@ -909,7 +1088,7 @@
         return {
           activeCandleId,
           spinning,
-          songPlaying,
+          mediaPlaying,
           allBlown,
           nomSoundCount,
           biteInProgress,
@@ -929,9 +1108,16 @@
           groupComic: {
             unlocked: groupComicUnlocked,
             buttonVisible: !document.getElementById("group-comic-btn").hidden,
-            configuredPages: Array.isArray(CONFIG.groupComic && CONFIG.groupComic.comics)
-              ? CONFIG.groupComic.comics.length
-              : 0,
+            configured: Boolean(CONFIG.groupComic && CONFIG.groupComic.pdf),
+          },
+          comicModal: {
+            pdfUrl: modalPdfUrl,
+            pageNum: modalPageNum,
+            numPages: modalNumPages,
+            zoomed: modalZoomed,
+            hasPdf: Boolean(modalPdfDoc),
+            zoomButtonVisible: !document.getElementById("zoom-btn").hidden,
+            placeholderText: document.querySelector("#modal-gallery .comic-placeholder")?.textContent || "",
           },
           songExperience: {
             visible: !document.getElementById("song-experience").classList.contains("hidden"),
@@ -941,6 +1127,12 @@
             progress: songExperienceRun ? songExperienceRun.progress : 0,
             photoVisible: !document.getElementById("song-photo-wrap").classList.contains("hidden"),
             photoIndex: songExperienceRun ? songExperienceRun.photoIndex : -1,
+          },
+          videoExperience: {
+            visible: !document.getElementById("video-experience").classList.contains("hidden"),
+            src: document.getElementById("birthday-video").getAttribute("src") || "",
+            paused: document.getElementById("birthday-video").paused,
+            ended: document.getElementById("birthday-video").ended,
           },
           microphone: {
             state: micState,

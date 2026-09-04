@@ -155,24 +155,25 @@ assert(initialUi.firstLink === "personas/hungryman.html", "La página individual
 assert(initialUi.description.includes("Hungryman"), "Los metadatos principales no incluyen a Hungryman");
 assert(initialUi.socialImage.endsWith("/public/og-v2.png"), "La tarjeta social nueva no está enlazada");
 assert(!initialUi.buttonDisabled, "La ruleta empieza bloqueada");
-const expectedConfigKeys = ["audio", "color", "comics", "id", "lyrics", "name", "songPhotos"];
+const expectedConfigKeys = ["audio", "color", "comicPdf", "id", "lyrics", "name", "songPhotos", "video"];
 assert(
   initialUi.configKeys.every((keys) => JSON.stringify(keys) === JSON.stringify(expectedConfigKeys)),
-  "config.js no conserva exactamente {id,name,color,audio,lyrics,songPhotos,comics}"
+  "config.js no conserva exactamente {id,name,color,audio,video,lyrics,songPhotos,comicPdf}"
 );
 assert(
   JSON.stringify(initialUi.configNames) === JSON.stringify(["Hungryman", "Dientes", "Carlos", "Daviles"]),
   "Los nombres de las cuatro personas no son los esperados"
 );
-assert(JSON.stringify(initialUi.groupComicKeys) === JSON.stringify(["comics"]), "Falta CONFIG.groupComic.comics");
+assert(JSON.stringify(initialUi.groupComicKeys) === JSON.stringify(["pdf"]), "Falta CONFIG.groupComic.pdf");
 
 const screenshot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
 await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
 
+const expectedNpcCount = await evaluate("fetch('assets/npcs/phrases.json').then((r) => r.json()).then((d) => d.npcs.length)");
 const loadedState = await waitFor(async () => {
   const current = await state();
-  return current.scene.walkers.every((walker) => walker.phraseCount > 0) ? current : null;
-}, "No se cargaron las frases de los 16 NPC");
+  return current.scene.walkers.length === expectedNpcCount && current.scene.walkers.every((walker) => walker.phraseCount > 0) ? current : null;
+}, "No se cargaron las frases de todos los NPC de phrases.json");
 const sceneState = loadedState.scene;
 assert(sceneState.placeSettings.length === 4, "No hay cuatro sitios preparados en la mesa");
 assert(
@@ -204,12 +205,15 @@ assert(sceneState.cakeProfile.shape === "rectangular-prism", "La tarta no es un 
 assert(sceneState.cakeProfile.quadrantCount === 4, "La tapa no está dividida en una cuadrícula 2x2");
 assert(sceneState.cakeProfile.biteSegmentsPerQuadrant === 4, "Cada cuadrante no tiene cuatro mordiscos triangulares");
 assert(sceneState.cakeProfile.redCubeCount === 8, "Faltan los pequeños cubos rojos de la tapa");
-assert(sceneState.walkers.length === 16, "No hay exactamente 16 invitados low-poly");
+assert(sceneState.walkers.length === expectedNpcCount, `El paseo no tiene los ${expectedNpcCount} invitados de phrases.json`);
 assert(
-  JSON.stringify(sceneState.walkers.map((walker) => walker.id)) === JSON.stringify(Array.from({ length: 16 }, (_, index) => `npc-${String(index + 1).padStart(2, "0")}`)),
-  "Los NPC no tienen los ids npc-01 a npc-16"
+  JSON.stringify(sceneState.walkers.map((walker) => walker.id)) === JSON.stringify(Array.from({ length: expectedNpcCount }, (_, index) => `npc-${String(index + 1).padStart(2, "0")}`)),
+  `Los NPC no tienen los ids npc-01 a npc-${String(expectedNpcCount).padStart(2, "0")}`
 );
-assert(sceneState.walkers.filter((walker) => walker.kind === "girl").length >= 6, "Faltan chicas entre los invitados");
+assert(
+  sceneState.walkers.filter((walker) => walker.kind === "girl").length >= Math.floor(expectedNpcCount * 0.3),
+  "Faltan chicas entre los invitados"
+);
 assert(
   ["hat", "cap", "beard"].every((accessory) => sceneState.walkers.some((walker) => walker.accessory === accessory)),
   "Los invitados no tienen sombreros, gorras y barbas"
@@ -410,7 +414,11 @@ await send("Input.dispatchMouseEvent", { type: "mousePressed", x: blowPoint.x, y
 await waitFor(async () => (await state()).people[firstId].blown, "Mantener pulsado el botón no apagó la vela");
 await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: blowPoint.x, y: blowPoint.y, button: "left", buttons: 0, clickCount: 1 });
 assert(!(await state()).microphone.holding, "El botón quedó pulsado después de soltar");
-await waitFor(async () => !(await state()).songPlaying, "El aviso de canción ausente dejó la fiesta bloqueada");
+await waitFor(async () => (await state()).mediaPlaying, "Soplar la vela no arrancó la canción o el vídeo real");
+// Las canciones y vídeos reales duran minutos; el modo de prueba puede saltarlos
+// para no bloquear la suite sin dejar de comprobar primero que sí se reprodujeron.
+await evaluate("window.__birthdayTest.skipMedia()");
+await waitFor(async () => !(await state()).mediaPlaying, "La canción o el vídeo real no liberaron la fiesta al terminar");
 
 const chosenIds = [firstId];
 for (let round = 1; round < 4; round++) {
@@ -426,19 +434,19 @@ for (let round = 1; round < 4; round++) {
   });
   assert(roundSpeeds[0] > roundSpeeds.at(-1) * 8, "Una tirada posterior no frenó progresivamente");
 
-  const result = await evaluate(`(async () => {
-    const test = window.__birthdayTest;
-    const promise = test.blow();
-    const during = test.getState();
-    const blockedSpin = await test.spin();
-    const blockedBlow = await test.blow();
-    await promise;
-    return { during, blockedSpin, blockedBlow, after: test.getState() };
-  })()`);
-  assert(result.during.songPlaying, "La canción no activó el bloqueo exclusivo");
-  assert(result.blockedSpin === null, "Se pudo girar mientras sonaba la canción");
-  assert(result.blockedBlow === false, "Se pudo volver a soplar durante la canción");
-  assert(!result.after.songPlaying, "La canción o aviso no liberó la siguiente ronda");
+  // Las canciones y vídeos reales duran minutos, así que el soplido se dispara sin
+  // esperar su promesa (que solo se resuelve al terminar la reproducción real) y se
+  // salta con skipMedia() tras comprobar el bloqueo exclusivo.
+  send("Runtime.evaluate", { expression: "window.__birthdayTest.blow()", awaitPromise: false, returnByValue: true, userGesture: true });
+  await waitFor(async () => (await state()).mediaPlaying, "La canción o el vídeo real no arrancó tras soplar");
+  const during = await state();
+  const blockedSpin = await evaluate("window.__birthdayTest.spin()");
+  const blockedBlow = await evaluate("window.__birthdayTest.blow()");
+  assert(during.mediaPlaying, "La canción o el vídeo no activó el bloqueo exclusivo");
+  assert(blockedSpin === null, "Se pudo girar mientras sonaba la canción o el vídeo");
+  assert(blockedBlow === false, "Se pudo volver a soplar durante la canción o el vídeo");
+  await evaluate("window.__birthdayTest.skipMedia()");
+  await waitFor(async () => !(await state()).mediaPlaying, "La canción o el vídeo no liberaron la siguiente ronda");
 }
 
 const afterCandles = await state();
@@ -496,12 +504,19 @@ assert(finalState.nomSoundCount === 16, "El total de sonidos de comer no coincid
 assert(finalState.biteAudio.fallbackCount === 16, "El fallback de prueba no sonó una vez por mordisco");
 assert(new Set(finalState.viewedComicIds).size === 4, "No constan como vistos los cuatro cómics individuales");
 assert(finalState.groupComic.unlocked && finalState.groupComic.buttonVisible, "El botón del cómic final no apareció");
+assert(finalState.groupComic.configured, "CONFIG.groupComic.pdf no está configurado");
 await evaluate("document.getElementById('group-comic-btn').click()");
+await waitFor(() => evaluate("document.querySelector('#modal-gallery canvas') !== null"), "El PDF del cómic grupal no se renderizó");
 const groupComicState = await state();
-const groupPlaceholder = await evaluate("document.getElementById('modal-gallery').innerText");
 assert(groupComicState.modalOpen && groupComicState.modalKind === "group", "El botón no abre el cómic final");
-assert(groupPlaceholder.includes("cómic final de los cuatro"), "Falta el aviso amistoso del cómic grupal vacío");
-assert(groupPlaceholder.includes("assets/comics/group/"), "El aviso grupal no indica la carpeta correcta");
+assert(groupComicState.comicModal.hasPdf, "El cómic grupal no cargó su PDF");
+assert(groupComicState.comicModal.numPages > 1, "El PDF grupal no tiene varias páginas");
+await evaluate("document.getElementById('next-btn').click()");
+await new Promise((resolve) => setTimeout(resolve, 200));
+assert((await state()).comicModal.pageNum === 2, "Las flechas no pasan de página en el cómic grupal");
+await evaluate("document.getElementById('zoom-btn').click()");
+await new Promise((resolve) => setTimeout(resolve, 200));
+assert((await state()).comicModal.zoomed === true, "La lupa no activa el zoom en el cómic grupal");
 await evaluate("window.__birthdayTest.closeComic()");
 
 // Comprobación responsive, órbita táctil y fallback de pulsación mantenida.
@@ -574,7 +589,9 @@ await send("Input.dispatchTouchEvent", {
 });
 await waitFor(async () => Object.values((await state()).people).some((person) => person.blown), "La pulsación táctil mantenida no apagó la vela");
 await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-await waitFor(async () => !(await state()).songPlaying, "El aviso móvil dejó la fiesta bloqueada");
+await waitFor(async () => (await state()).mediaPlaying, "El soplido táctil no arrancó la canción o el vídeo real");
+await evaluate("window.__birthdayTest.skipMedia()");
+await waitFor(async () => !(await state()).mediaPlaying, "El aviso móvil dejó la fiesta bloqueada");
 
 // La ruta normal conserva una ruleta lenta y termina en el plano sobre el hombro.
 await send("Emulation.setDeviceMetricsOverride", {
