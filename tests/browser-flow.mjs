@@ -260,9 +260,11 @@ assert(
 assert(walkerAfter.every((walker) => !walker.intersectsFurniture), "Un invitado entró en la zona del mobiliario");
 
 // Un clic real detiene al NPC, lo orienta a cámara y muestra su bocadillo.
+// El límite inferior deja fuera el botón fijo de saltar canción/vídeo, que
+// flota sobre la esquina inferior derecha justo encima de la barra inferior.
 const npcTarget = walkerAfter.find((walker) => (
   walker.screenPosition.visible && walker.screenPosition.x > 45 && walker.screenPosition.x < 1235 &&
-  walker.screenPosition.y > 135 && walker.screenPosition.y < 670
+  walker.screenPosition.y > 135 && walker.screenPosition.y < 600
 ));
 assert(npcTarget, "No hay ningún NPC visible disponible para probar el diálogo");
 await clickAt(npcTarget.screenPosition.x, npcTarget.screenPosition.y);

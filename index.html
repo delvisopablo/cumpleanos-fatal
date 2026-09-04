@@ -52,6 +52,21 @@
     </div>
     <div class="video-experience hidden" id="video-experience" aria-live="polite">
       <video id="birthday-video" playsinline></video>
+      <div class="video-lyrics video-lyrics-left hidden" id="video-lyrics-left">
+        <div class="lyrics-crawl" id="video-lyrics-crawl-left">
+          <h2 id="video-lyrics-title-left"></h2>
+          <div class="lyrics-copy" id="video-lyrics-copy-left"></div>
+        </div>
+      </div>
+      <div class="video-lyrics video-lyrics-right hidden" id="video-lyrics-right">
+        <div class="lyrics-crawl" id="video-lyrics-crawl-right">
+          <h2 id="video-lyrics-title-right"></h2>
+          <div class="lyrics-copy" id="video-lyrics-copy-right"></div>
+        </div>
+      </div>
+    </div>
+    <div class="countdown-overlay hidden" id="countdown-overlay" aria-live="assertive">
+      <span class="countdown-number" id="countdown-number"></span>
     </div>
     <div class="npc-dialog-layer" id="npc-dialog-layer" aria-live="polite"></div>
     <div class="scene-fallback" id="scene-fallback" hidden>
@@ -60,6 +75,8 @@
     </div>
   </section>
 </main>
+
+<button type="button" id="skip-media-btn" class="skip-media-btn" title="Saltar la canción o el vídeo actual">⏭ Saltar</button>
 
 <footer class="party-dock">
   <h2 class="sr-only" id="people-title">Los cuatro cumpleañeros</h2>

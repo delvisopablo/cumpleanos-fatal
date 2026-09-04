@@ -1429,7 +1429,7 @@
       };
       // Siempre sobre el hombro izquierdo, con suficiente altura y distancia
       // para conservar la tarta completa y sus cuatro velas en el encuadre.
-      const shoulderDistance = seated.id === "hungryman" ? 4.25 : 3.65;
+      const shoulderDistance = seated.id === "hungryman" ? 4.75 : 4.1;
       const shoulderOffset = seated.id === "hungryman" ? 0.24 : 0.21;
       const shoulderPose = {
         radius: Math.hypot(seated.mesh.position.x, seated.mesh.position.z) + shoulderDistance,

@@ -17,6 +17,9 @@
   const DEFAULT_BITE_AUDIO_DURATION_MS = 1000;
   const TEST_MISSING_BITE_DURATION_MS = 70;
   const BITE_METADATA_TIMEOUT_MS = TEST_MODE ? 350 : 3500;
+  const AMBIENT_VOLUME = 0.16;
+  const AMBIENT_FADE_MS = TEST_MODE ? 60 : 550;
+  const COUNTDOWN_STEP_MS = TEST_MODE ? 12 : 700;
   const PERSON_PAGES = {
     hungryman: "personas/hungryman.html",
     dientes: "personas/dientes.html",
@@ -33,6 +36,12 @@
   let currentAudio = null;
   let nomSoundCount = 0;
   let songExperienceRun = null;
+  let videoLyricsRun = null;
+  let ambientAudio = null;
+  let ambientEnabled = true;
+  let ambientFadeTimer = null;
+  let activeInterrupt = null;
+  let roundSkipRequested = false;
   let biteInProgress = false;
   let biteAudioStatus = "idle";
   let biteAudioDurationMs = DEFAULT_BITE_AUDIO_DURATION_MS;
@@ -76,6 +85,59 @@
 
   function personById(id) {
     return CONFIG.people.find((person) => person.id === id);
+  }
+
+  function attemptAmbientPlay() {
+    if (!ambientAudio || !ambientEnabled) return;
+    const playPromise = ambientAudio.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {
+        const resume = () => attemptAmbientPlay();
+        ["pointerdown", "keydown"].forEach((eventName) => {
+          global.addEventListener(eventName, resume, { once: true });
+        });
+      });
+    }
+  }
+
+  function fadeAmbientTo(targetVolume) {
+    if (!ambientAudio || !ambientEnabled) return;
+    global.clearInterval(ambientFadeTimer);
+    const steps = 10;
+    const startVolume = ambientAudio.volume;
+    let step = 0;
+    ambientFadeTimer = global.setInterval(() => {
+      step += 1;
+      const ratio = step / steps;
+      ambientAudio.volume = Math.max(0, Math.min(1, startVolume + (targetVolume - startVolume) * ratio));
+      if (step >= steps) {
+        global.clearInterval(ambientFadeTimer);
+        ambientFadeTimer = null;
+        if (targetVolume <= 0) ambientAudio.pause();
+      }
+    }, AMBIENT_FADE_MS / steps);
+  }
+
+  function initAmbientMusic() {
+    if (!CONFIG.ambientMusic) return;
+    const audio = new Audio(CONFIG.ambientMusic);
+    audio.loop = true;
+    audio.volume = AMBIENT_VOLUME;
+    audio.preload = "auto";
+    audio.addEventListener("error", () => { ambientEnabled = false; }, { once: true });
+    ambientAudio = audio;
+    attemptAmbientPlay();
+  }
+
+  function duckAmbientMusic() {
+    if (!ambientAudio || !ambientEnabled) return;
+    fadeAmbientTo(0);
+  }
+
+  function restoreAmbientMusic() {
+    if (!ambientAudio || !ambientEnabled) return;
+    if (ambientAudio.paused) attemptAmbientPlay();
+    fadeAmbientTo(AMBIENT_VOLUME);
   }
 
   async function loadNpcData() {
@@ -289,6 +351,60 @@
     });
   }
 
+  function hideVideoLyrics() {
+    const run = videoLyricsRun;
+    videoLyricsRun = null;
+    if (run && run.frame) global.cancelAnimationFrame(run.frame);
+    ["left", "right"].forEach((side) => {
+      const viewport = document.getElementById(`video-lyrics-${side}`);
+      if (viewport) viewport.classList.add("hidden");
+    });
+  }
+
+  function startVideoLyrics(person, lines, durationSeconds, getCurrentTime) {
+    hideVideoLyrics();
+    const lyricLines = Array.isArray(lines) ? lines : [];
+    if (lyricLines.length === 0 || !Number.isFinite(durationSeconds) || durationSeconds <= 0) return;
+
+    const title = lyricLines[0] || "";
+    const bodyLines = lyricLines.slice(1);
+    const sides = ["left", "right"].map((side) => {
+      const viewport = document.getElementById(`video-lyrics-${side}`);
+      const crawl = document.getElementById(`video-lyrics-crawl-${side}`);
+      const titleEl = document.getElementById(`video-lyrics-title-${side}`);
+      const copyEl = document.getElementById(`video-lyrics-copy-${side}`);
+      if (!viewport || !crawl || !titleEl || !copyEl) return null;
+      titleEl.textContent = title;
+      copyEl.replaceChildren();
+      bodyLines.forEach((line) => {
+        const paragraph = document.createElement("p");
+        paragraph.textContent = line;
+        copyEl.appendChild(paragraph);
+      });
+      viewport.classList.remove("hidden");
+      return { viewport, crawl };
+    }).filter(Boolean);
+    if (sides.length === 0) return;
+
+    const run = { frame: null };
+    videoLyricsRun = run;
+
+    function update() {
+      if (videoLyricsRun !== run) return;
+      const currentTime = Math.max(0, Number(getCurrentTime()) || 0);
+      const ratio = Math.min(1, currentTime / durationSeconds);
+      sides.forEach(({ viewport, crawl }) => {
+        const startY = viewport.clientHeight * 0.94;
+        const endY = -(crawl.scrollHeight + 24);
+        const offset = startY + (endY - startY) * ratio;
+        crawl.style.transform = `translateY(${offset}px) rotateX(9deg)`;
+      });
+      if (ratio >= 1) return;
+      run.frame = global.requestAnimationFrame(update);
+    }
+    run.frame = global.requestAnimationFrame(update);
+  }
+
   function previewSongForTest(lines, durationMs, photos = []) {
     const startedAt = performance.now();
     return startSongExperience(
@@ -337,8 +453,18 @@
         if (finished) return;
         finished = true;
         cleanup();
+        if (activeInterrupt === interruptSong) activeInterrupt = null;
         resolve(result);
       }
+
+      function interruptSong() {
+        if (finished) return;
+        audio.pause();
+        hideSongExperience(true);
+        finish({ played: false, missing: false, skipped: true });
+      }
+
+      activeInterrupt = interruptSong;
 
       function handleEnded() {
         hideSongExperience(true);
@@ -399,6 +525,7 @@
 
   function playVideo(id) {
     const person = personById(id);
+    const lyricsPromise = loadLyrics(person);
     return new Promise((resolve) => {
       if (currentAudio) {
         currentAudio.pause();
@@ -406,6 +533,7 @@
         currentAudio = null;
       }
       hideSongExperience(false);
+      hideVideoLyrics();
 
       const panel = document.getElementById("video-experience");
       const video = document.getElementById("birthday-video");
@@ -416,6 +544,7 @@
 
       function hidePanel() {
         panel.classList.add("hidden");
+        hideVideoLyrics();
         video.pause();
         video.removeAttribute("src");
         video.load();
@@ -433,17 +562,29 @@
         if (finished) return;
         finished = true;
         cleanup();
+        if (activeInterrupt === interruptVideo) activeInterrupt = null;
         resolve(result);
       }
+
+      function interruptVideo() {
+        if (finished) return;
+        hidePanel();
+        finish({ played: false, missing: false, skipped: true });
+      }
+
+      activeInterrupt = interruptVideo;
 
       function handleEnded() {
         hidePanel();
         finish({ played: true, missing: false });
       }
 
-      function handleReady() {
+      async function handleReady() {
         clearTimeout(loadTimer);
         panel.classList.remove("hidden");
+        const lines = await lyricsPromise;
+        if (finished) return;
+        startVideoLyrics(person, lines, video.duration, () => video.currentTime);
       }
 
       function handleMissing() {
@@ -764,6 +905,48 @@
     return blowOutCandle(activeCandleId);
   }
 
+  function skipCurrentMedia() {
+    if (!mediaPlaying) return false;
+    roundSkipRequested = true;
+    if (typeof activeInterrupt === "function") activeInterrupt();
+    return true;
+  }
+
+  function runCountdown() {
+    if (roundSkipRequested) return Promise.resolve();
+    const overlay = document.getElementById("countdown-overlay");
+    const numberEl = document.getElementById("countdown-number");
+    if (!overlay || !numberEl) return Promise.resolve();
+
+    overlay.classList.remove("hidden");
+    return new Promise((resolve) => {
+      let count = 5;
+      let timer = null;
+
+      function finish() {
+        global.clearTimeout(timer);
+        overlay.classList.add("hidden");
+        if (activeInterrupt === finish) activeInterrupt = null;
+        resolve();
+      }
+      activeInterrupt = finish;
+
+      function tick() {
+        numberEl.textContent = String(count);
+        numberEl.classList.remove("countdown-number");
+        void numberEl.offsetWidth;
+        numberEl.classList.add("countdown-number");
+        if (count <= 1) {
+          timer = global.setTimeout(finish, COUNTDOWN_STEP_MS);
+          return;
+        }
+        count -= 1;
+        timer = global.setTimeout(tick, COUNTDOWN_STEP_MS);
+      }
+      tick();
+    });
+  }
+
   async function blowOutCandle(id) {
     const itemState = state[id];
     if (!itemState || itemState.blown || activeCandleId !== id || mediaPlaying) return false;
@@ -772,6 +955,7 @@
     itemState.blown = true;
     activeCandleId = null;
     mediaPlaying = true;
+    roundSkipRequested = false;
     breathAboveSince = null;
     releaseBlowHold();
     setBlowUiVisible(false);
@@ -783,11 +967,26 @@
         : `¡Vela de ${person.displayName || person.name} apagada! Ahora suena su canción 🎶`
     );
 
-    const mediaExperiencePromise = person.video ? playVideo(id) : playSong(id);
+    await cake.blowOutCandle(id);
+    if (!roundSkipRequested) await runCountdown();
+
+    let didDuckAmbient = false;
+    let mediaExperiencePromise;
+    if (roundSkipRequested) {
+      mediaExperiencePromise = Promise.resolve({ played: false, missing: false, skipped: true });
+    } else {
+      duckAmbientMusic();
+      didDuckAmbient = true;
+      mediaExperiencePromise = person.video ? playVideo(id) : playSong(id);
+    }
+
     try {
-      await Promise.all([cake.blowOutCandle(id), mediaExperiencePromise]);
+      await mediaExperiencePromise;
     } finally {
       mediaPlaying = false;
+      roundSkipRequested = false;
+      activeInterrupt = null;
+      if (didDuckAmbient) restoreAmbientMusic();
     }
 
     const remaining = CONFIG.people.filter((candidate) => !state[candidate.id].blown);
@@ -1061,6 +1260,12 @@
     });
   }
 
+  function bindSkipControl() {
+    const skipButton = document.getElementById("skip-media-btn");
+    if (!skipButton) return;
+    skipButton.addEventListener("click", () => skipCurrentMedia());
+  }
+
   function exposeTestApi() {
     if (!TEST_MODE) return;
     global.__birthdayTest = {
@@ -1074,12 +1279,7 @@
       previewSong: previewSongForTest,
       talkToNpc: (id) => cake && cake.talkToNpc(id),
       setBiteAudioDuration: setBiteAudioDurationForTest,
-      skipMedia: () => {
-        if (currentAudio) currentAudio.dispatchEvent(new Event("ended"));
-        const video = document.getElementById("birthday-video");
-        if (video) video.dispatchEvent(new Event("ended"));
-        return true;
-      },
+      skipMedia: () => skipCurrentMedia(),
       openGroupComic,
       closeComic,
       getState() {
@@ -1160,7 +1360,9 @@
     renderLegend(displayNames(CONFIG.people));
     bindBlowControls();
     bindModalControls();
+    bindSkipControl();
     loadBiteAudioMetadata();
+    initAmbientMusic();
 
     if (!global.THREE || !global.Cake3D) {
       document.getElementById("scene-fallback").hidden = false;
@@ -1195,6 +1397,7 @@
     releaseBlowHold();
     if (activeBiteAudio) activeBiteAudio.pause();
     if (biteAudioProbe) biteAudioProbe.removeAttribute("src");
+    if (ambientAudio) ambientAudio.pause();
     if (cake) cake.dispose();
   });
   document.addEventListener("DOMContentLoaded", init);

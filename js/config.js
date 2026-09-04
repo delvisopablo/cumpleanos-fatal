@@ -34,6 +34,13 @@
               cuatro. Súbelo a assets/comics/group/comic.pdf. Se desbloquea
               cuando ya se han visto los cuatro cómics individuales.
 
+  ambientMusic -> ruta a una música de fondo que suena en bucle y a volumen
+              bajo mientras nadie sopla su vela (al cargar la web, durante
+              la ruleta, mientras se come la tarta). Se silencia en cuanto
+              empieza a sonar la canción o el vídeo de alguien y vuelve a
+              subir cuando termina. Si el archivo no existe todavía, la web
+              sigue funcionando igual, simplemente sin música de fondo.
+
   CÓMO AÑADIR LA CANCIÓN DE ALGUIEN:
     1. Sube el mp3 o el ogg a assets/audio/ (por ejemplo assets/audio/carlos.ogg).
     2. Comprueba que el campo "audio" de esa persona apunta a esa ruta.
@@ -96,7 +103,8 @@ const CONFIG = {
   ],
   groupComic: {
     pdf: "assets/comics/group/comic.pdf"
-  }
+  },
+  ambientMusic: "assets/audio/musica-ambiente.mp3"
 };
 
 // Se expone explícitamente en window para que cake3d.js, script.js y las
