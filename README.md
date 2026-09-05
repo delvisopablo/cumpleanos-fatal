@@ -48,6 +48,24 @@ que para ver la letra debes usar el servidor estático. No hay que instalar
 dependencias ni ejecutar un build. La misma carpeta puede publicarse tal cual
 en GitHub Pages, Netlify o cualquier hosting estático.
 
+## Desplegar en Vercel
+
+1. Importa el repo en Vercel.
+2. No hace falta tocar nada: `vercel.json` ya le dice a Vercel que es un
+   sitio estático (sin build ni instalación), así que lo sirve tal cual
+   desde la raíz.
+
+## Desplegar en Railway
+
+1. Crea un servicio nuevo en Railway a partir de este repo.
+2. Railway detecta `package.json` y `railway.json` solo: instala
+   `serve` (`npm install`) y arranca con `npm start`, que sirve la
+   carpeta entera como sitio estático en el puerto que Railway asigne
+   (variable `PORT`).
+
+Ninguna de las dos plataformas necesita variables de entorno ni base de
+datos: sigue siendo un sitio 100% estático.
+
 ## Configuración de las personas
 
 Todo se edita en `js/config.js`. Cada persona conserva exactamente estos

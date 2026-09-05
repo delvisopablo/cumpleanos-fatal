@@ -2,3 +2,4 @@ dist/
 .claude-flow/
 .swarm/
 .DS_Store
+node_modules/
