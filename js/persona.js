@@ -82,7 +82,7 @@
     renderSeq += 1;
     const seq = renderSeq;
     const gallery = document.getElementById("personal-gallery");
-    const targetWidth = Math.max(240, Math.min(680, gallery.clientWidth || 480));
+    const targetWidth = Math.max(240, Math.min(1000, gallery.clientWidth || 480));
     try {
       const canvas = await window.ComicViewer.renderPage(pdfDoc, pageNum, { targetWidth, zoomed });
       if (seq !== renderSeq) return;

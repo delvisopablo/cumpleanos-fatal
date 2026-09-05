@@ -260,8 +260,6 @@ assert(
 assert(walkerAfter.every((walker) => !walker.intersectsFurniture), "Un invitado entró en la zona del mobiliario");
 
 // Un clic real detiene al NPC, lo orienta a cámara y muestra su bocadillo.
-// El límite inferior deja fuera el botón fijo de saltar canción/vídeo, que
-// flota sobre la esquina inferior derecha justo encima de la barra inferior.
 const npcTarget = walkerAfter.find((walker) => (
   walker.screenPosition.visible && walker.screenPosition.x > 45 && walker.screenPosition.x < 1235 &&
   walker.screenPosition.y > 135 && walker.screenPosition.y < 600
@@ -491,11 +489,35 @@ for (const personId of chosenIds) {
       assert(biteState.modalKind === "individual", "Se abrió un modal distinto al cómic individual");
       completedComics += 1;
       assert(
-        biteState.groupComic.unlocked === (completedComics === 4) &&
-          biteState.groupComic.buttonVisible === (completedComics === 4),
-        "El cómic final no respeta el desbloqueo tras los cuatro individuales"
+        !biteState.groupComic.unlocked && !biteState.groupComic.buttonVisible,
+        "El cómic final se desbloqueó nada más abrir el cómic individual, antes de leerlo y cerrarlo"
       );
+
+      // El aviso del cómic final solo debe salir tras cerrar el último cómic
+      // individual una vez alcanzada su última página, así que lo recorremos
+      // entero antes de cerrarlo.
+      await waitFor(async () => (await state()).comicModal.numPages > 0, "El cómic individual no cargó sus páginas");
+      let pageState = await state();
+      while (pageState.comicModal.pageNum < pageState.comicModal.numPages) {
+        const currentPage = pageState.comicModal.pageNum;
+        await evaluate("document.getElementById('next-btn').click()");
+        pageState = await waitFor(async () => {
+          const candidate = await state();
+          return candidate.comicModal.pageNum > currentPage ? candidate : null;
+        }, "El cómic individual no avanzó de página");
+      }
+      assert(
+        !(await state()).groupComic.unlocked,
+        "El cómic final se desbloqueó al llegar a la última página, antes de cerrar el cómic individual"
+      );
+
       await evaluate("window.__birthdayTest.closeComic()");
+      const afterIndividualClose = await state();
+      assert(
+        afterIndividualClose.groupComic.unlocked === (completedComics === 4) &&
+          afterIndividualClose.groupComic.buttonVisible === (completedComics === 4),
+        "El cómic final no respeta el desbloqueo tras cerrar el último cómic individual en su última página"
+      );
     }
   }
 }

@@ -62,6 +62,7 @@
   let modalNumPages = 0;
   let modalZoomed = false;
   let modalMissingHtml = "";
+  let modalReachedEnd = false;
   let modalLoadSeq = 0;
   let modalRenderSeq = 0;
   const viewedComicIds = new Set();
@@ -1102,8 +1103,6 @@
     const modal = document.getElementById("comic-modal");
     modal.classList.remove("hidden");
     document.getElementById("modal-close").focus();
-    viewedComicIds.add(id);
-    if (viewedComicIds.size === CONFIG.people.length) unlockGroupComic();
   }
 
   function unlockGroupComic() {
@@ -1137,6 +1136,7 @@
     modalNumPages = 0;
     modalZoomed = false;
     modalMissingHtml = missingHtml;
+    modalReachedEnd = false;
     document.getElementById("modal-content").classList.remove("is-zoomed");
 
     if (!url || !global.ComicViewer || !global.ComicViewer.available()) {
@@ -1158,6 +1158,7 @@
 
   function renderComicMissing() {
     document.getElementById("modal-gallery").innerHTML = `<div class="comic-placeholder">${modalMissingHtml}</div>`;
+    modalReachedEnd = true;
     updateModalNav();
   }
 
@@ -1177,7 +1178,7 @@
     modalRenderSeq += 1;
     const seq = modalRenderSeq;
     const gallery = document.getElementById("modal-gallery");
-    const targetWidth = Math.max(240, Math.min(720, gallery.clientWidth || 480));
+    const targetWidth = Math.max(240, Math.min(1100, gallery.clientWidth || 480));
     try {
       const canvas = await global.ComicViewer.renderPage(modalPdfDoc, modalPageNum, {
         targetWidth,
@@ -1188,6 +1189,7 @@
       canvas.setAttribute("aria-label", comicPageLabel());
       gallery.innerHTML = "";
       gallery.appendChild(canvas);
+      if (modalPageNum >= modalNumPages) modalReachedEnd = true;
     } catch (error) {
       if (seq !== modalRenderSeq) return;
       renderComicMissing();
@@ -1217,6 +1219,10 @@
     if (modal.classList.contains("hidden")) return;
     modal.classList.add("hidden");
     modalLoadSeq += 1;
+    if (modalKind === "individual" && modalPerson && modalReachedEnd) {
+      viewedComicIds.add(modalPerson.id);
+      if (viewedComicIds.size === CONFIG.people.length) unlockGroupComic();
+    }
     modalPerson = null;
     modalKind = null;
     if (modalReturnFocus && typeof modalReturnFocus.focus === "function") modalReturnFocus.focus();
@@ -1258,12 +1264,6 @@
     ["pointerup", "pointercancel", "pointerleave"].forEach((eventName) => {
       blowButton.addEventListener(eventName, releaseBlowHold);
     });
-  }
-
-  function bindSkipControl() {
-    const skipButton = document.getElementById("skip-media-btn");
-    if (!skipButton) return;
-    skipButton.addEventListener("click", () => skipCurrentMedia());
   }
 
   function exposeTestApi() {
@@ -1360,7 +1360,6 @@
     renderLegend(displayNames(CONFIG.people));
     bindBlowControls();
     bindModalControls();
-    bindSkipControl();
     loadBiteAudioMetadata();
     initAmbientMusic();
 

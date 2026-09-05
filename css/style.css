@@ -233,28 +233,33 @@ a:focus-visible {
   display: block;
   margin-bottom: 0.4rem;
   color: rgba(255, 255, 255, 0.78);
-  font-size: clamp(0.85rem, 1.6vw, 1.05rem);
+  font-size: clamp(1.1rem, 2.2vw, 1.4rem);
   font-weight: 900;
   letter-spacing: 0.15em;
   text-transform: uppercase;
 }
 
 .lyrics-crawl h2 {
-  margin: 0 0 1.6rem;
+  margin: 0 0 1.8rem;
   color: #fff2ae;
-  font-size: clamp(2.6rem, 7.5vw, 5.4rem);
-  line-height: 1.05;
+  font-size: clamp(6rem, 18vw, 15rem);
+  line-height: 1.02;
   text-shadow: 0 4px 22px rgba(0, 0, 0, 0.75);
+  overflow-wrap: break-word;
 }
 
 .lyrics-copy p {
-  margin: 0 0 1.1rem;
-  font-size: clamp(1.7rem, 4.6vw, 3.1rem);
+  margin: 0 0 1.3rem;
+  font-size: clamp(4.4rem, 14vw, 11rem);
   font-weight: 800;
-  line-height: 1.35;
+  line-height: 1.15;
   text-wrap: balance;
   text-shadow: 0 3px 14px rgba(0, 0, 0, 0.82);
+  overflow-wrap: break-word;
 }
+
+.video-lyrics .lyrics-crawl h2 { font-size: clamp(2.8rem, 8.5vw, 5.2rem); }
+.video-lyrics .lyrics-copy p { font-size: clamp(2.2rem, 7vw, 4.2rem); }
 
 .video-lyrics {
   position: absolute;
@@ -350,27 +355,6 @@ a:focus-visible {
   55% { transform: scale(1.12); opacity: 1; }
   100% { transform: scale(1); opacity: 1; }
 }
-
-.skip-media-btn {
-  position: fixed;
-  z-index: 45;
-  right: max(1rem, env(safe-area-inset-right));
-  bottom: calc(var(--dock-height) + 1rem);
-  padding: 0.55rem 0.95rem;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 999px;
-  color: #fff;
-  background: rgba(20, 8, 35, 0.82);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(10px);
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.skip-media-btn:hover { background: rgba(35, 15, 58, 0.9); }
-.skip-media-btn:active { transform: scale(0.96); }
 
 .npc-dialog-layer {
   position: absolute;
@@ -669,7 +653,7 @@ a:focus-visible {
 
 .modal-content {
   position: relative;
-  width: min(100%, 580px);
+  width: min(94vw, 760px);
   max-height: 88vh;
   overflow-y: auto;
   padding: 1.7rem 1.4rem 1.4rem;
@@ -682,7 +666,7 @@ a:focus-visible {
   transition: width 0.25s ease;
 }
 
-.modal-content.is-zoomed { width: min(100%, 960px); }
+.modal-content.is-zoomed { width: min(96vw, 1200px); }
 
 @keyframes modal-in {
   from { transform: scale(0.88) translateY(12px); opacity: 0; }
@@ -845,9 +829,12 @@ a:focus-visible {
 
   .lyrics-crawl { padding-inline: 1rem; }
 
-  .lyrics-crawl h2 { font-size: clamp(2.1rem, 11vw, 3.1rem); }
+  .lyrics-crawl h2 { font-size: clamp(4.5rem, 20vw, 8rem); }
 
-  .lyrics-copy p { font-size: clamp(1.35rem, 7.6vw, 1.9rem); }
+  .lyrics-copy p { font-size: clamp(3.7rem, 18vw, 6.5rem); }
+
+  .video-lyrics .lyrics-crawl h2 { font-size: clamp(2.2rem, 13vw, 3.4rem); }
+  .video-lyrics .lyrics-copy p { font-size: clamp(1.85rem, 10.8vw, 2.8rem); }
 
   .song-photo {
     top: 0.4rem;
@@ -858,12 +845,6 @@ a:focus-visible {
 
   .video-lyrics { width: 46vw; }
   .video-lyrics .lyrics-crawl { padding-inline: 0.6rem; }
-
-  .skip-media-btn {
-    bottom: calc(var(--dock-height) + 0.6rem);
-    padding: 0.45rem 0.8rem;
-    font-size: 0.74rem;
-  }
 
   .party-dock { padding-top: 0.55rem; }
 
